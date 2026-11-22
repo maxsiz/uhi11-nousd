@@ -1,0 +1,1085 @@
+<title>noUSD Peg Model</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of ~70ch; wide diagrams break out to 1040px inside their own scroll boxes. */
+:root {
+  --bg: #f4f6f7;
+  --surface: #ffffff;
+  --ink: #15212b;
+  --muted: #5a6873;
+  --line: #d3dadf;
+  --accent: #1d6a86;      /* noUSD / protocol */
+  --accent-soft: #e2eff4;
+  --owner: #5b4a9e;       /* owner-only actions */
+  --owner-soft: #ece9f7;
+  --risk: #a8661a;        /* peg-floor risk */
+  --risk-soft: #f8eedf;
+  --bad: #b23c37;
+  --good: #2c7a55;
+  --good-soft: #e1f1e8;
+  --f-display: "Onest", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f161c; --surface: #16212a; --ink: #e3eaee; --muted: #93a3ae; --line: #2a3843;
+    --accent: #5fb4d3; --accent-soft: #17323d; --owner: #a898e6; --owner-soft: #262242;
+    --risk: #e0a557; --risk-soft: #35281a; --bad: #e57a73; --good: #6cc89a; --good-soft: #17322a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f161c; --surface: #16212a; --ink: #e3eaee; --muted: #93a3ae; --line: #2a3843;
+  --accent: #5fb4d3; --accent-soft: #17323d; --owner: #a898e6; --owner-soft: #262242;
+  --risk: #e0a557; --risk-soft: #35281a; --bad: #e57a73; --good: #6cc89a; --good-soft: #17322a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--f-body); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 72px;
+}
+main { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+.col { max-width: 70ch; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 2.9rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; font-weight: 600; }
+h3 { font-size: 1.12rem; font-weight: 600; }
+p { margin: 0; }
+section { display: flex; flex-direction: column; gap: 18px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.12rem; color: var(--muted); max-width: 64ch; }
+code, .mono { font-family: var(--f-mono); font-size: 0.9em; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font-size: 0.85rem; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); }
+.chip.lock { border-color: var(--owner); color: var(--owner); background: var(--owner-soft); font-weight: 500; }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+.diagram svg { display: block; min-width: 900px; width: 100%; height: auto; }
+svg text { font-family: var(--f-body); fill: var(--ink); }
+svg .t-title { font-family: var(--f-display); font-weight: 600; font-size: 15px; }
+svg .t-small { font-size: 12px; fill: var(--muted); }
+svg .t-mono { font-family: var(--f-mono); font-size: 11.5px; fill: var(--muted); }
+svg .t-edge { font-size: 12px; font-weight: 500; }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+svg .box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.4; }
+svg .box-owner { fill: var(--owner-soft); stroke: var(--owner); stroke-width: 1.4; }
+svg .box-good { fill: var(--good-soft); stroke: var(--good); stroke-width: 1.4; }
+svg .box-risk { fill: var(--risk-soft); stroke: var(--risk); stroke-width: 1.4; }
+svg .edge { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+svg .edge-owner { fill: none; stroke: var(--owner); stroke-width: 1.8; }
+svg .edge-accent { fill: none; stroke: var(--accent); stroke-width: 1.8; }
+svg .edge-good { fill: none; stroke: var(--good); stroke-width: 1.8; }
+svg .edge-dash { stroke-dasharray: 5 4; }
+svg .ah-muted { fill: var(--muted); } svg .ah-owner { fill: var(--owner); }
+svg .ah-accent { fill: var(--accent); } svg .ah-good { fill: var(--good); }
+svg .fill-owner { fill: var(--owner); } svg .fill-accent { fill: var(--accent); }
+svg .fill-good { fill: var(--good); } svg .fill-risk { fill: var(--risk); } svg .fill-bad { fill: var(--bad); }
+
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.grid4 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.card.good { border-color: var(--good); }
+.card.risk { border-color: var(--risk); background: var(--risk-soft); }
+.card ol, .card ul { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 4px; }
+.tag { align-self: flex-start; font-family: var(--f-mono); font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; }
+.tag.good { color: var(--good); background: var(--good-soft); }
+.tag.risk { color: var(--risk); background: var(--risk-soft); border: 1px solid var(--risk); }
+.tag.owner { color: var(--owner); background: var(--owner-soft); }
+.tag.accent { color: var(--accent); background: var(--accent-soft); }
+.muted { color: var(--muted); }
+.callout { border-left: 3px solid var(--risk); padding: 4px 0 4px 16px; max-width: 70ch; }
+.callout strong { color: var(--risk); }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+.tablewrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--f-mono); font-size: 0.75rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: none; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.prior { min-width: 860px; font-size: 0.9rem; }
+table.prior a { color: var(--accent); }
+section h3 { margin-top: 8px; }
+
+/* simulator */
+.sim { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; grid-template-columns: minmax(220px, 300px) 1fr; gap: 24px; }
+@media (max-width: 760px) { .sim { grid-template-columns: 1fr; } }
+.controls { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ctl { display: flex; flex-direction: column; gap: 4px; }
+.ctl label { display: flex; justify-content: space-between; gap: 8px; font-size: 0.9rem; }
+.ctl output { font-family: var(--f-mono); font-variant-numeric: tabular-nums; color: var(--accent); }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+input[type=range]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.chartbox { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.chartbox svg { width: 100%; height: auto; display: block; }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 0.88rem; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+.readout { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.readout div { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; }
+.readout b { display: block; font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 1.15rem; font-weight: 500; }
+.readout small { color: var(--muted); font-size: 0.8rem; }
+details.archive { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; }
+details.archive > summary { cursor: pointer; font-family: var(--f-display); font-weight: 600; font-size: 1.15rem; }
+details.archive .archive-body { display: flex; flex-direction: column; gap: 56px; margin-top: 28px; }
+footer { color: var(--muted); font-size: 0.88rem; max-width: 70ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+  <header style="display:flex;flex-direction:column;gap:16px">
+    <div class="eyebrow">Сайд-проект · концепт · редакция 20.11.2026</div>
+    <h1>noUSD: доля в общем хранилище стейбл-LP</h1>
+    <p class="lede">Один менеджер — общее хранилище. Кто угодно вносит разрешённый стейбл и получает noUSD. В той же транзакции хранилище кладёт стейбл в одну из своих позиций в стейбл-пулах Uniswap v4: пул выбирают рамки реестра и доходность на чейне. noUSD выпускается на фактически положенную стоимость. Сжигая noUSD, держатель забирает свою долю всех позиций во всех токенах на адрес, который выберет сам. Комиссии делит накопитель, как <code>feeGrowth</code> в самом Uniswap: каждому — с момента его входа. PSM-хук перенесён на этап 2, модель A с отдельными менеджерами — в архиве внизу.</p>
+    <div class="chips">
+      <span class="chip lock">Один менеджер, общее хранилище</span>
+      <span class="chip">Минтит кто угодно</span>
+      <span class="chip">Burn → доля всех позиций</span>
+      <span class="chip">Получатель на выбор</span>
+      <span class="chip">Комиссии остаются в позициях</span>
+      <span class="chip">Реестр разрешённых стейблов</span>
+      <span class="chip">Мультисиг 2 из 3 + timelock</span>
+      <span class="chip">PSM-хук — этап 2</span>
+    </div>
+  </header>
+
+  <!-- ───────────── v3 Section 1: architecture ───────────── -->
+  <section>
+    <div class="eyebrow">Модель v3 · одно хранилище</div>
+    <h2>Кто с кем говорит</h2>
+    <p class="col">Пользователь говорит только с хранилищем. Хранилище и есть токен noUSD (ERC-20), и оно же владеет всеми позициями. Реестр разрешает стейблы, мультисиг правит реестр. Комиссии пулов остаются в позициях: при каждом mint и burn хранилище вливает их в тело позиций.</p>
+    <div class="diagram" role="img" aria-label="Схема модели v3: пользователь вносит стейбл в хранилище и получает noUSD; хранилище держит позиции в стейбл-пулах v4; при сжигании доля каждого токена уходит получателю; реестр и мультисиг сверху; PSM-хук отложен на этап 2">
+      <svg viewBox="0 0 980 540" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="v-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-muted"/></marker>
+          <marker id="v-owner" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-owner"/></marker>
+          <marker id="v-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-accent"/></marker>
+          <marker id="v-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-good"/></marker>
+        </defs>
+
+        <!-- Registry -->
+        <rect x="300" y="20" width="320" height="100" rx="8" class="box-owner"/>
+        <text x="318" y="46" class="t-title">Реестр</text>
+        <text x="318" y="68" class="t-small">разрешённые стейблы: оракул, порог депега, лимит</text>
+        <text x="318" y="86" class="t-small">пресеты диапазонов</text>
+        <text x="318" y="104" class="t-small">допуск и пределы пулов (гибрид)</text>
+
+        <!-- Governance -->
+        <rect x="720" y="20" width="240" height="100" rx="8" class="box-owner"/>
+        <text x="736" y="46" class="t-title">Мультисиг 2 из 3</text>
+        <text x="736" y="68" class="t-small">правит реестр</text>
+        <text x="736" y="86" class="t-small">ужесточение — сразу</text>
+        <text x="736" y="104" class="t-small">ослабление — через timelock</text>
+        <path d="M718,70 L622,70" class="edge-owner" marker-end="url(#v-owner)"/>
+
+        <!-- Vault -->
+        <rect x="300" y="160" width="320" height="250" rx="8" class="box-accent"/>
+        <text x="318" y="188" class="t-title">Хранилище = токен noUSD</text>
+        <text x="318" y="210" class="t-small">один менеджер, владеет всеми позициями</text>
+        <text x="318" y="242" class="t-mono">mint(stable, amount, to)</text>
+        <text x="318" y="262" class="t-mono">burn(noUSD, recipient)</text>
+        <text x="318" y="292" class="t-mono">mint = стоимость положенного</text>
+        <text x="318" y="312" class="t-mono">claim() → noUSD из комиссий</text>
+        <text x="318" y="342" class="t-small">накопитель: комиссия на 1 noUSD,</text>
+        <text x="318" y="362" class="t-small">отметка на mint, burn и transfer</text>
+        <text x="318" y="392" class="t-small">свободного остатка нет: всё в позициях</text>
+        <path d="M460,158 L460,122" class="edge edge-dash" marker-end="url(#v-muted)"/>
+        <text x="468" y="145" class="t-small">проверка при mint</text>
+
+        <!-- User -->
+        <rect x="20" y="170" width="190" height="130" rx="8" class="box"/>
+        <text x="36" y="196" class="t-title">Пользователь</text>
+        <text x="36" y="218" class="t-small">любой адрес</text>
+        <text x="36" y="236" class="t-small">вносит один стейбл</text>
+        <text x="36" y="254" class="t-small">сжигает noUSD</text>
+        <text x="36" y="272" class="t-small">выбирает получателя</text>
+
+        <path d="M212,200 L298,200" class="edge-accent" marker-end="url(#v-accent)"/>
+        <text x="220" y="192" class="t-edge">10 USDC</text>
+        <path d="M298,236 L212,236" class="edge-accent" marker-end="url(#v-accent)"/>
+        <text x="216" y="228" class="t-edge">9.9993 noUSD</text>
+        <path d="M212,280 L298,280" class="edge" marker-end="url(#v-muted)"/>
+        <text x="220" y="272" class="t-edge">burn noUSD</text>
+
+        <!-- Recipient -->
+        <rect x="20" y="380" width="190" height="84" rx="8" class="box-good"/>
+        <text x="36" y="406" class="t-title">Получатель</text>
+        <text x="36" y="428" class="t-small">любой адрес, его задаёт</text>
+        <text x="36" y="446" class="t-small">тот, кто сжигает</text>
+        <path d="M298,380 C255,380 255,420 212,420" class="edge-good" marker-end="url(#v-good)"/>
+        <text x="218" y="446" class="t-edge">доля всех</text>
+        <text x="218" y="463" class="t-edge">токенов</text>
+
+        <!-- Positions -->
+        <rect x="720" y="150" width="240" height="260" rx="8" class="box"/>
+        <text x="736" y="174" class="t-title">Uniswap v4</text>
+        <text x="736" y="192" class="t-small">позиции хранилища, пулы без хуков</text>
+        <rect x="736" y="204" width="208" height="54" rx="6" class="box-good"/>
+        <text x="750" y="226" class="t-edge">USDC / USDT · 0.01%</text>
+        <text x="750" y="246" class="t-mono">L₁ + комиссии</text>
+        <rect x="736" y="268" width="208" height="54" rx="6" class="box-good"/>
+        <text x="750" y="290" class="t-edge">USDC / USDT · 0.05%</text>
+        <text x="750" y="310" class="t-mono">L₂ + комиссии</text>
+        <rect x="736" y="332" width="208" height="54" rx="6" class="box-good"/>
+        <text x="750" y="354" class="t-edge">USDC / DAI · 0.01%</text>
+        <text x="750" y="374" class="t-mono">L₃ + комиссии</text>
+        <path d="M624,285 L716,285" class="edge-accent" marker-start="url(#v-accent)" marker-end="url(#v-accent)"/>
+        <text x="632" y="268" class="t-small">add / remove</text>
+        <text x="632" y="308" class="t-small">комиссии</text>
+        <text x="632" y="324" class="t-small">→ в тело</text>
+
+        <!-- Stage 2 -->
+        <rect x="720" y="440" width="240" height="80" rx="8" class="box-risk" stroke-dasharray="6 4"/>
+        <text x="736" y="466" class="t-title">Этап 2: PSM-хук 1:1</text>
+        <text x="736" y="488" class="t-small">возможно, не понадобится:</text>
+        <text x="736" y="506" class="t-small">пол держит burn (см. ниже)</text>
+      </svg>
+    </div>
+
+    <div class="grid4">
+      <div class="card">
+        <span class="tag accent">mint</span>
+        <h3>Внести стейбл</h3>
+        <ol>
+          <li>Реестр: стейбл разрешён, оракул выше порога депега, лимит не превышен.</li>
+          <li>Комиссии до входа начисляются старым держателям через счётчик.</li>
+          <li>В той же транзакции своп части стейбла и добавление в выбранную позицию.</li>
+          <li>Минтит noUSD на фактически положенную стоимость на адрес <code>to</code>. Своп невозможен — revert.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag good">burn</span>
+        <h3>Сжечь noUSD</h3>
+        <ol>
+          <li>Доля <code>s = x / (supply + невыплаченное)</code>, до сжигания.</li>
+          <li>Из каждой позиции снимается доля <code>s</code> ликвидности. Начисленное к этому моменту остаётся за держателем и забирается через <code>claim()</code>.</li>
+          <li>Все токены уходят на <code>recipient</code>. Свопов нет, токен выбрать нельзя.</li>
+          <li>Ни реестр, ни пауза burn не останавливают.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag good">комиссии</span>
+        <h3>Доход держателя</h3>
+        <ol>
+          <li>Физически комиссии вливаются в позиции и работают дальше.</li>
+          <li>Учитывает их счётчик «комиссия на 1 noUSD», как <code>feeGrowth</code> в v4.</li>
+          <li><code>claim()</code> минтит держателю noUSD на начисленное: обеспечение уже в позициях.</li>
+          <li>Доля протокола — открытый вопрос (0 или минт noUSD в казну).</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag owner">выбор пула</span>
+        <h3>Гибрид</h3>
+        <ol>
+          <li>Реестр: какие пулы допустимы (без хуков, разрешённые стейблы и ставки).</li>
+          <li>Реестр: пределы — наша доля в пуле, вес в корзине, минимум ликвидности.</li>
+          <li>Контракт: внутри рамок — пул с лучшей доходностью из <code>feeGrowthGlobal</code>.</li>
+          <li>Подробно — в разделе про минт ниже.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── v3 Section: one-tx mint + hybrid pool choice ───────────── -->
+  <section>
+    <div class="eyebrow">Решено 21.11 · минт одной транзакцией · выбор пула гибридом</div>
+    <h2>Минт: от стейбла до работающей позиции за одну транзакцию</h2>
+    <p class="col">Внесённое не ждёт отдельного <code>deploy()</code>: проверки, учёт комиссий, своп, добавление ликвидности и минт идут в одном <code>unlock</code> PoolManager. Поэтому каждый noUSD работает с момента выпуска, и для справедливого дележа хватает простого накопителя по балансу. Своп и добавление могут идти в разных пулах: своп — где дешевле минтеру, добавление — где выгоднее держателям. Flash accounting v4 сводит дельты обоих.</p>
+    <div class="diagram" role="img" aria-label="Шесть шагов минта в одном unlock: проверки, выбор позиции, учёт комиссий до входа, своп в пуле A, добавление в пул B, минт noUSD по фактической стоимости; ниже три уровня выбора позиции: допуск и пределы реестра и сигнал доходности на чейне">
+      <svg viewBox="0 0 980 580" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="w-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-muted"/></marker>
+          <marker id="w-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-accent"/></marker>
+        </defs>
+        <rect x="8" y="8" width="964" height="384" rx="10" class="box" stroke-dasharray="6 4"/>
+        <text x="24" y="34" class="t-small">один unlock в PoolManager · любая проверка не прошла → revert, стейбл остаётся у пользователя</text>
+
+        <rect x="20" y="50" width="290" height="124" rx="8" class="box"/>
+        <text x="36" y="76" class="t-title">1 · Проверки</text>
+        <text x="36" y="100" class="t-small">стейбл разрешён, лимит не превышен</text>
+        <text x="36" y="120" class="t-small">оракул стейбла выше порога депега</text>
+        <text x="36" y="140" class="t-small">minOut и deadline от пользователя</text>
+
+        <rect x="345" y="50" width="290" height="124" rx="8" class="box-owner"/>
+        <text x="361" y="76" class="t-title">2 · Выбор позиции</text>
+        <text x="361" y="100" class="t-small">пул B для добавления — гибрид (ниже)</text>
+        <text x="361" y="120" class="t-small">пул A для свопа — самый дешёвый</text>
+        <text x="361" y="140" class="t-small">для минтера; A и B могут совпадать</text>
+
+        <rect x="670" y="50" width="290" height="124" rx="8" class="box"/>
+        <text x="686" y="76" class="t-title">3 · Комиссии до входа</text>
+        <text x="686" y="100" class="t-small">poke позиций или чтение StateView</text>
+        <text x="686" y="120" class="t-small">счётчик «комиссия на 1 noUSD» растёт</text>
+        <text x="686" y="140" class="t-small">новичка в этом начислении нет</text>
+
+        <path d="M312,112 L343,112" class="edge" marker-end="url(#w-muted)"/>
+        <path d="M637,112 L668,112" class="edge" marker-end="url(#w-muted)"/>
+        <path d="M815,176 L815,200 L165,200 L165,226" class="edge" marker-end="url(#w-muted)"/>
+
+        <rect x="20" y="230" width="290" height="124" rx="8" class="box"/>
+        <text x="36" y="256" class="t-title">4 · Своп в пуле A</text>
+        <text x="36" y="280" class="t-small">часть стейбла → второй токен пула B</text>
+        <text x="36" y="300" class="t-small">объём — под диапазон позиции</text>
+        <text x="36" y="320" class="t-small">спот A рядом с оракулом (θ)</text>
+
+        <rect x="345" y="230" width="290" height="124" rx="8" class="box-good"/>
+        <text x="361" y="256" class="t-title">5 · Добавить в пул B</text>
+        <text x="361" y="280" class="t-small">оба токена в позицию без остатка</text>
+        <text x="361" y="300" class="t-small">спот B рядом с оракулом (θ)</text>
+        <text x="361" y="320" class="t-small">наша доля в B не выше предела</text>
+
+        <rect x="670" y="230" width="290" height="124" rx="8" class="box-accent"/>
+        <text x="686" y="256" class="t-title">6 · Минт noUSD</text>
+        <text x="686" y="280" class="t-small">noUSD = стоимость положенного</text>
+        <text x="686" y="300" class="t-mono">10 000 USDC → ≈ 9 999.30 noUSD</text>
+        <text x="686" y="320" class="t-small">отметка счётчика у получателя</text>
+
+        <path d="M312,292 L343,292" class="edge" marker-end="url(#w-muted)"/>
+        <path d="M637,292 L668,292" class="edge" marker-end="url(#w-muted)"/>
+        <text x="24" y="378" class="t-small">своп платит минтер (вариант 2): недобор ≈ комиссия пула A + проскальзывание на обмененную часть, ~0.007% при цене в середине диапазона</text>
+
+        <text x="20" y="428" class="t-title">Шаг 2 подробно: как выбирается пул B</text>
+        <rect x="20" y="444" width="290" height="124" rx="8" class="box-owner"/>
+        <text x="36" y="470" class="t-title">Допуск · реестр</text>
+        <text x="36" y="494" class="t-small">пулы без хуков из разрешённых стейблов</text>
+        <text x="36" y="514" class="t-small">разрешённые ставки комиссии</text>
+        <text x="36" y="534" class="t-small">цена сейчас в диапазоне пресета</text>
+
+        <rect x="345" y="444" width="290" height="124" rx="8" class="box-owner"/>
+        <text x="361" y="470" class="t-title">Пределы · реестр</text>
+        <text x="361" y="494" class="t-small">наша доля ≤ 30% ликвидности пула</text>
+        <text x="361" y="514" class="t-small">вес пула в корзине ≤ лимита</text>
+        <text x="361" y="534" class="t-small">ликвидность пула ≥ минимума</text>
+
+        <rect x="670" y="444" width="290" height="124" rx="8" class="box-accent"/>
+        <text x="686" y="470" class="t-title">Сигнал · на чейне</text>
+        <text x="686" y="494" class="t-small">доходность из feeGrowthGlobal за 7 дней</text>
+        <text x="686" y="514" class="t-small">с поправкой на наш объём:</text>
+        <text x="686" y="534" class="t-mono">r × L / (L + x) → max</text>
+
+        <path d="M312,506 L343,506" class="edge-accent" marker-end="url(#w-accent)"/>
+        <path d="M637,506 L668,506" class="edge-accent" marker-end="url(#w-accent)"/>
+      </svg>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <span class="tag owner">реестр · мультисиг</span>
+        <h3>Рамки задаёт человек</h3>
+        <p>Какие пулы вообще можно брать и сколько в них класть. Пределы защищают от двух вещей: наш капитал размывает доходность пула, и, если ликвидность в пуле почти только наша, мы становимся ликвидностью для чужого выхода. Начальные цифры (30%, лимит веса, минимум ликвидности) — предложение, их надо подобрать по данным <code>insight/rank_pools</code>.</p>
+      </div>
+      <div class="card">
+        <span class="tag accent">сигнал · контракт</span>
+        <h3>Внутри рамок выбирает доходность</h3>
+        <p>Хранилище на каждом poke запоминает <code>feeGrowthGlobal</code> пулов с отметкой времени и считает, сколько за 7 дней заработала единица ликвидности. Новый депозит идёт туда, где доходность после нашего добавления выше. Сигнал можно накачать через <code>donate()</code> или свопы туда-обратно, но это стоит денег атакующему, а предел доли и 7-дневное окно ограничивают, сколько нашего капитала он перетянет.</p>
+      </div>
+    </div>
+    <div class="callout"><p><strong>Следующий вопрос — позиция вне диапазона.</strong> Пул, где цена ушла из пресета, выпадает на шаге «допуск»: минт туда не идёт, но и уже лежащая там ликвидность ничего не зарабатывает. Оператора нет, значит, нужен вызов, который может сделать кто угодно: перенести позицию в пресет вокруг текущей цены при проверке оракулом, по образцу <code>moveLiquidity</code>.</p></div>
+  </section>
+
+  <!-- ───────────── v3 Section 2: peg ───────────── -->
+  <section>
+    <div class="eyebrow">Как держится цена</div>
+    <h2>Пол и потолок держит каждый держатель</h2>
+    <p class="col">Главное отличие от модели A: обменять noUSD на залог может кто угодно, не только минтер. Цена noUSD на рынке зажата с двух сторон без резерва и без хука.</p>
+    <div class="grid2">
+      <div class="card good">
+        <span class="tag good">потолок · цена выше $1</span>
+        <h3>noUSD дороже $1</h3>
+        <p>Любой вносит USDC 1:1 и продаёт noUSD дороже. Supply растёт, цена опускается.</p>
+      </div>
+      <div class="card good">
+        <span class="tag good">пол · цена ниже доли</span>
+        <h3>noUSD дешевле своей доли</h3>
+        <p>Любой покупает noUSD дёшево, сжигает и получает свою долю корзины стейблов. Supply падает, цена поднимается. Поэтому PSM-хук, скорее всего, не нужен.</p>
+      </div>
+    </div>
+    <div class="callout"><p><strong>Пол — корзина, а не $1.</strong> Если один стейбл залога депегнул, корзина стоит меньше, и noUSD честно стоит меньше. Минт этим стейблом реестр останавливает, burn продолжает работать.</p></div>
+  </section>
+
+  <!-- ───────────── v3 Section 3: the contradiction ───────────── -->
+  <section>
+    <div class="eyebrow">Противоречие 20.11 · основное снято 21.11</div>
+    <h2>Требования, которые пока не сходятся</h2>
+    <div class="callout"><p><strong>Как снято 21.11.</strong> Требование 2 смягчено: noUSD выпускается на фактически положенную стоимость, а не строго 1:1. Требование 5 уточнено: комиссии физически остаются в позициях, но делит их накопитель, а не доля в теле. Минт идёт одной транзакцией, без свободного остатка. Ниже — исходная запись 20.11. Открытыми остаются противоречия 3 и 4 из раздела с моделью.</p></div>
+    <p class="col">Все пять требований приняты. Вместе они не сходятся: если минтить строго 1:1, а при сжигании отдавать долю общего котла, новый минтер получает часть комиссий, накопленных до него.</p>
+    <div class="grid2">
+      <div class="card">
+        <span class="tag owner">требования</span>
+        <ol>
+          <li><b>Один токен.</b> Без sNoUSD и без второй доли.</li>
+          <li><b>1:1 к стейблу, а не к доллару.</b> Внёс 1 USDC — получил 1 noUSD. Стейбл считаем равным доллару.</li>
+          <li><b>Без rebase</b> и без минта по <code>P = NAV / supply</code>.</li>
+          <li><b>Burn отдаёт долю</b> всех позиций во всех токенах пропорционально supply.</li>
+          <li><b>Комиссии остаются в позициях</b> и вливаются в тело при mint и burn.</li>
+        </ol>
+      </div>
+      <div class="card risk">
+        <span class="tag risk">почему не сходится</span>
+        <p>Вливание комиссии в тело (poke через <code>modifyLiquidity</code>) переносит её из «долга позиции» в общую ликвидность хранилища, но новых noUSD не выпускает. После этого на 1 noUSD приходится больше $1 тела. Минт 1:1 продаёт долю, которая стоит $1.01, за $1.</p>
+        <p class="muted">Пример: supply 1 000 000, тело после вливания $1 010 000. Минт на флеш-кредите $1 000 000 и сразу burn — атакующий забирает $1 005 000, половину комиссий старых держателей.</p>
+      </div>
+    </div>
+    <h3>Что уже отвергнуто</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Вариант</th><th>Как снимает противоречие</th><th>Почему не подходит</th></tr></thead>
+        <tbody>
+          <tr><td>Rebase</td><td>Комиссия → новые noUSD на балансах всех держателей</td><td>Нарушает требование 3</td></tr>
+          <tr><td>sNoUSD (ERC-4626)</td><td>Комиссия → новые noUSD в стейкинг-хранилище</td><td>Второй токен, нарушает требование 1</td></tr>
+          <tr><td>Минт по <code>P</code></td><td>Цена входа включает накопленное</td><td>Не 1:1, нарушает требования 2 и 3</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Ещё не обсуждали</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Мысль</th><th>Как работает</th><th>Что ломает или чего стоит</th></tr></thead>
+        <tbody>
+          <tr><td>Накопитель внутри токена</td><td>Как <code>rewardPerToken</code> у Synthetix StakingRewards, но в самом noUSD. Вливание комиссии на $X поднимает счётчик «noUSD к получению на 1 noUSD» на <code>X / supply</code>. На каждом transfer, mint и burn адрес фиксирует свой снимок, начисленное забирается через <code>claim()</code> новыми noUSD. Балансы сами не меняются, токен один, минт 1:1. Burn отдаёт долю тела по номиналу: <code>x / (supply + невыплаченное)</code>.</td><td>Дороже каждый transfer: плюс одна запись в storage. Начисления на адреса пулов DEX и контрактов никто не заберёт — нужен список исключённых адресов. Новичок до первого вливания после своего входа ничего не получает, это и есть защита.</td></tr>
+          <tr><td>Burn по номиналу, излишек — протоколу</td><td>Burn 1 noUSD = корзина на $1. Комиссии копятся как излишек хранилища.</td><td>Держатель ничего не зарабатывает, доход у протокола. Это модель USDC или PSM, а не доходный стейбл.</td></tr>
+          <tr><td>Задержка выхода после минта</td><td>Новые noUSD нельзя сжечь N блоков или дней</td><td>Убирает флеш-кредит, но не размытие: кто продержит N дней, всё равно получит долю старых комиссий</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col">Чем это оборачивается в цифрах, считает модель в следующем разделе.</p>
+    <div class="callout"><p><strong>Следствие «1:1 к стейблу».</strong> Если стейбл потерял привязку, минт им по 1:1 и burn по доле всей корзины выкачивают хорошие стейблы. Поэтому порог депега в реестре обязателен: ниже порога минт этим стейблом закрыт, burn работает.</p></div>
+  </section>
+
+  <!-- ───────────── v3 Section: simulation ───────────── -->
+  <section>
+    <div class="eyebrow">Проверка моделью · 21.11 · Монте-Карло, 2000 прогонов на сценарий</div>
+    <h2>Кто на самом деле забирает комиссии</h2>
+    <p class="col">За основу взята твоя модель: 10 пользователей, лимит $100k, 30 дней, тот же генератор входов и выходов, сервисная доля 10%. Что я добавил:</p>
+    <ul class="col">
+      <li><b>Комиссии от объёма пула, а не фиксированный APR.</b> Пул зарабатывает $500 в сутки, чужая ликвидность в диапазоне — $2M. Хранилище получает долю по своей ликвидности, поэтому новый капитал не создаёт дохода пропорционально себе.</li>
+      <li><b>Свободный остаток.</b> Внесённое лежит в хранилище без дохода, пока <code>deploy()</code> не разложит его по позициям: раз в сутки или раз в час.</li>
+      <li><b>Сжигание забирает долю</b> и из свободного остатка, и из позиций.</li>
+      <li><b>Четыре схемы раздачи и три атакующих</b>, у каждого атакующего лимит $50k.</li>
+    </ul>
+    <h3>Схемы, все с минтом 1:1 к стейблу</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Схема</th><th>Как делит комиссии</th><th>Что стоит на чейне</th></tr></thead>
+        <tbody>
+          <tr><td><b>A</b></td><td>Вливает в тело позиций, burn отдаёт <code>x / supply</code> тела. Наша модель v3 как есть</td><td>Ничего лишнего</td></tr>
+          <tr><td><b>B</b></td><td>Отдельный учёт, раз в сутки делит по балансам на начало суток («snap» из твоей модели)</td><td>Снимок балансов раз в сутки</td></tr>
+          <tr><td><b>C</b></td><td>Накопитель: на каждом mint, burn и transfer начисляет по балансу noUSD («fair» из твоей модели)</td><td>Отметка держателя на каждом transfer, <code>claim()</code></td></tr>
+          <tr><td><b>C2</b></td><td>Накопитель, но начисляет только на ту часть баланса, которая уже разложена по позициям</td><td>То же, что в C, плюс у каждого адреса отдельно «ждёт deploy» и «работает»</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col muted">Эталон — C2: комиссию получает тот, чей капитал в это время стоял в пуле. Расхождение — сколько долларов честные пользователи получили не по эталону.</p>
+
+    <h3>Без атакующих</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>deploy()</th><th>Комиссий за 30 дней</th><th>A</th><th>B</th><th>C</th><th>C2</th></tr></thead>
+        <tbody>
+          <tr><td>раз в сутки</td><td class="num">$234.66</td><td class="num">$50.95 · 22%</td><td class="num">$2.56 · 1.1%</td><td class="num">$3.66 · 1.6%</td><td class="num">0</td></tr>
+          <tr><td>раз в час</td><td class="num">$246.49</td><td class="num">$51.35 · 21%</td><td class="num">$4.50 · 1.8%</td><td class="num">$0.16 · 0.1%</td><td class="num">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col">В схеме A даже без атак пятая часть дохода переходит от ранних держателей к поздним: каждый новый минт 1:1 покупает долю, в которой уже лежат старые комиссии. В C новичок получает доход, пока его деньги ждут <code>deploy()</code>. Чем чаще <code>deploy()</code>, тем меньше перекос.</p>
+
+    <h3>С атакующим: сколько комиссий он забирает</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Атака</th><th>Что делает</th><th>A</th><th>B</th><th>C</th><th>C2</th></tr></thead>
+        <tbody>
+          <tr><td>Флеш</td><td>Раз в сутки mint и burn в одной транзакции</td><td class="num"><b>$202 · 86%</b></td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+          <tr><td>Снимок</td><td>Входит за миг до снимка суток, выходит сразу после</td><td class="num"><b>$197 · 84%</b></td><td class="num"><b>$120 · 51%</b></td><td class="num">0</td><td class="num">0</td></tr>
+          <tr><td>Свободный остаток, deploy раз в сутки</td><td>Входит сразу после <code>deploy()</code>, выходит перед следующим. Его деньги так и не попадают в пул</td><td class="num"><b>$199 · 94%</b></td><td class="num">0</td><td class="num"><b>$121 · 58%</b></td><td class="num">0</td></tr>
+          <tr><td>То же, deploy раз в час</td><td>720 циклов за 30 дней</td><td class="num"><b>$216 · 99%</b></td><td class="num">0</td><td class="num"><b>$125 · 58%</b></td><td class="num">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col muted">Процент считается от всех комиссий сценария. В атаке на свободный остаток комиссий меньше ($210–217): сжигание атакующего забирает долю и из позиций, и они стоят неразложенными до следующего <code>deploy()</code>.</p>
+
+    <h3>Что не снято</h3>
+    <div class="grid2" style="grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr))">
+      <div class="card risk">
+        <span class="tag good">1 · снято 21.11</span>
+        <h3>Минт 1:1 + комиссии в теле + burn по supply</h3>
+        <p>Схема A, то есть модель v3 как она нарисована выше. Атакующий без капитала во времени забирает 84–99% комиссий, честные держатели теряют пятую часть дохода даже без атак. Вливание комиссии в тело перед минтом не помогает: оно не выпускает noUSD старым держателям.</p>
+        <p class="muted">Снимается только отдельным учётом комиссий (C или C2). Тогда burn отдаёт не <code>x / supply</code> тела, а <code>x / (supply + невыплаченное)</code>, иначе комиссия выдаётся дважды. Требование 4 в исходной формулировке нарушается.</p>
+        <p><b>Решение:</b> накопитель + <code>claim()</code>, burn по номиналу.</p>
+      </div>
+      <div class="card">
+        <span class="tag good">2 · снято 21.11</span>
+        <h3>«Принёс один стейбл» против «доход по балансу»</h3>
+        <p>Один стейбл нельзя положить в позицию из двух токенов без свопа, поэтому внесённое ждёт <code>deploy()</code>. Накопитель по балансу (C) платит за это время, и атакующий забирает 58% комиссий, не дав пулу ни доллара. Частый <code>deploy()</code> не спасает: при раз в час всё те же 58%.</p>
+        <p class="muted">Снять можно тремя путями, каждый чего-то стоит:</p>
+        <ul class="muted">
+          <li>C2: у каждого адреса учёт «ждёт deploy» и «работает», в том числе на transfer;</li>
+          <li><code>deploy()</code> внутри минта со свопом — открывает сэндвич;</li>
+          <li>минт только парой токенов в пропорции позиций — нарушает «принёс 10 USDC».</li>
+        </ul>
+        <p><b>Решение:</b> своп внутри минта, сэндвич ограничен проверкой «спот рядом с оракулом» (θ) и <code>minOut</code>; своп платит минтер.</p>
+      </div>
+      <div class="card risk">
+        <span class="tag risk">3 · в силе</span>
+        <h3>1:1 к любому стейблу + корзина из нескольких</h3>
+        <p>Если USDT стоит $0.999, любой минтит за USDT 1:1 и сжигает за долю корзины, где есть USDC. Это бесплатный обмен по паритету, и он забирает хорошие стейблы у всех позиций сразу, а не только у пары USDC/USDT. Корзина на $50k, половина в USDC:</p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Цена USDT</th><th>Атакующий забирает</th><th>Сколько дней комиссий</th></tr></thead>
+            <tbody>
+              <tr><td class="num">$0.9995</td><td class="num">$12.50</td><td class="num">~1.6</td></tr>
+              <tr><td class="num">$0.9990</td><td class="num">$25.00</td><td class="num">~3.2</td></tr>
+              <tr><td class="num">$0.9950 (порог)</td><td class="num">$125.00</td><td class="num">~16</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="muted">Порог депега в реестре закрывает только то, что ниже порога. Внутри порога снять это можно минтом по <code>min(oracle, 1)</code> или комиссией за минт либо сжигание. Строгого 1:1 уже нет, поэтому оба пути открыты — решаем следующим.</p>
+      </div>
+      <div class="card risk">
+        <span class="tag risk">4 · в силе</span>
+        <h3>Начисления на адреса, которые не заберут</h3>
+        <p>В схемах C и C2 noUSD, лежащий в пуле DEX, на мосту или в чужом контракте, копит начисления, которые никто не вызовет через <code>claim()</code>. Комиссии зависают.</p>
+        <p class="muted">Нужен список исключённых адресов с перераспределением, а он требует управления (мультисиг) и может ошибаться.</p>
+      </div>
+    </div>
+    <div class="callout"><p><strong>Что сходится.</strong> С эталоном совпадает только C2, это видно по построению. Флеш-кредит и снимок закрывает и C. B на чейн ставить нельзя. Решение 21.11 делает C точной: минт одной транзакцией убирает «ждёт deploy», и каждый noUSD работает с выпуска. Противоречия 3 и 4 это не снимает.</p></div>
+    <p class="col muted">Ограничения модели: пул всегда в диапазоне, без депега и без переводов noUSD; газ не учитывается; атакующие ведут себя по одной фиксированной стратегии. Скрипт <code>docs/simulation/sim2.py</code>, seed 20261120, на основе <code>nousd_monte_carlo.py</code>.</p>
+  </section>
+
+  <!-- ───────────── Section: prior art ───────────── -->
+  <section>
+    <div class="eyebrow">Аналоги модели v3</div>
+    <h2>Кто уже делал что-то похожее</h2>
+    <p class="col">Модель v3: пользователь вносит стейбл в общее хранилище протокола, оно открывает позицию в стейбл-пуле v4 и выпускает noUSD; при сжигании возвращает долю позиции. Точно такой схемы в продакшене не найдено, ближе всего хакатонные прототипы ETHGlobal 2026. Ниже — токенизаторы LP-позиций и стейблы, обеспеченные корзиной стейблов, вложенной в стратегии. Сводку готовил stack-advisor 19.11.2026; пометка «не проверено» — факт не подтверждён первоисточником.</p>
+    <h3>Токенизация LP-позиций в ERC-20</h3>
+    <div class="tablewrap">
+      <table class="prior">
+        <thead><tr><th>Проект</th><th>v4</th><th>Вход и выход</th><th>Защита от манипуляции</th><th>Инциденты и урок</th><th>Источники</th></tr></thead>
+        <tbody>
+          <tr><td><b>Arrakis Modular</b></td><td>Да, модуль v4 с аудитом ChainSecurity</td><td>Вход двумя токенами в текущей пропорции, доли ERC-20; выход в обоих токенах пропорционально</td><td>Модуль инициализируется с оракулом; формула долей не сверялась с кодом</td><td>Не найдено. Предложение для стейбл-эмитентов прямо снимает с себя защиту пега: глубина обмена — задача пула, платёжеспособность — задача резерва</td><td><a href="https://docs.arrakis.finance/autogenerated/modules/UniV4StandardModulePublic.sol/contract.UniV4StandardModulePublic.html">модуль v4</a> · <a href="https://www.chainsecurity.com/security-audit/arrakis-uniswap-v4-module">аудит</a> · <a href="https://docs.arrakis.finance/stablecoin-issuers">стейбл-эмитентам</a></td></tr>
+          <tr><td><b>Bunni v2</b></td><td>Да, хук</td><td>Доли ERC-20; детали не проверены</td><td>Surge fee против сэндвичей при ребалансе</td><td>Сентябрь 2025, ~$8.4M: округление в <code>withdraw()</code>, безопасное в одном вызове, давало прибыль на серии мелких выводов плюс flash-swap. Закрылись в октябре 2025. Урок: fuzz последовательностей, округлять против пользователя везде</td><td><a href="https://docs.bunni.xyz/docs/v2/overview">docs</a> · <a href="https://blocksec.com/blog/bunni-incident-repeated-small-withdrawals-compound-a-rounding-error-into-an-8.4m-drain">разбор BlockSec</a> · <a href="https://www.theblock.co/post/375813/bunni-dex-shuts-down">закрытие</a></td></tr>
+          <tr><td><b>Gamma Hypervisors</b></td><td>Не найдено, v3 и форки</td><td>Вход двумя токенами с проверкой пропорции</td><td>Отклонение спота от TWAP, лимиты пропорции</td><td>Январь 2024, $3.4–6.2M: flash-займ сдвинул цену в пределах неверно заданного порога, депозиты в цикле чеканили лишние доли. Урок: цена по споту при выпуске долей — главная поверхность атаки</td><td><a href="https://medium.com/gamma-strategies/post-mortem-remediation-plan-9a62f10d90f3">post-mortem</a> · <a href="https://diligence.consensys.io/audits/2022/02/gamma">аудит</a></td></tr>
+          <tr><td><b>Charm Alpha Vaults</b></td><td>Не найдено, v3</td><td>Доли пропорционально, два токена</td><td>Ребаланс только при TWAP</td><td>Не найдено</td><td><a href="https://medium.com/charmfinance/alpha-vaults-v2-is-live-7c13cc608da">анонс v2</a></td></tr>
+          <tr><td><b>ICHI</b></td><td>Не найдено, v3</td><td>Вход одним токеном</td><td>Не проверено</td><td>Не проверялось</td><td><a href="https://defillama.com/protocol/ichi">DefiLlama</a></td></tr>
+          <tr><td><b>Steer</b></td><td>Заявлено в маркетинге, не проверено</td><td>—</td><td>—</td><td>—</td><td><a href="https://steer.finance/?p=3091">страница</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Стейблы под корзину стейблов, вложенную в стратегии</h3>
+    <div class="tablewrap">
+      <table class="prior">
+        <thead><tr><th>Проект</th><th>Как устроен</th><th>Доход держателю</th><th>Инциденты и урок</th><th>Источники</th></tr></thead>
+        <tbody>
+          <tr><td><b>Origin OUSD</b> — ближайший аналог</td><td>Сейчас 100% USDC. Выкуп 1:1 за USDC с задержкой от ~10 мин до 24 ч. Цены минта и выкупа ограничены отклонением от оракула. Стратегия (AMO) отвязана от пользовательских операций: средства не вкладываются и не выводятся внутри mint/redeem</td><td>Ребейз; контракты подключаются к нему явно. Комиссия выхода 0.5% → 0.25% (официальная страница не найдена)</td><td>Ноябрь 2020, ~$7M: реентранси через поддельный токен в минте несколькими активами запустило ребейз посреди минта. Урок: ребейз + минт корзиной — опасное сочетание</td><td><a href="https://docs.originprotocol.com/yield-bearing-tokens/origin-dollar-ousd">OUSD</a> · <a href="https://docs.originprotocol.com/security-and-risk/pricing-and-peg-management">цены и пег</a> · <a href="https://docs.originprotocol.com/protocol/amo">AMO</a> · <a href="https://www.originprotocol.com/blog/what-weve-changed-since-the-ousd-attack">после атаки</a></td></tr>
+          <tr><td><b>Sperax USDs</b></td><td>Взнос по <code>min(цена, 1)</code>; ниже $1 нужно больше залога. Выкуп ~$1 минус комиссия. Мультисиг может заменить залог при депеге больше 2%</td><td>Ребейз</td><td>Депег USDC в 2023 году, по их же признанию, не был учтён</td><td><a href="https://sperax169.substack.com/p/usds-v2">USDs v2</a></td></tr>
+          <tr><td><b>mStable mUSD</b></td><td>Корзина с лимитом веса на каждый актив — это ограничило убыток при депеге</td><td>Через отдельный сберегательный контракт</td><td>Свёрнут в марте 2023</td><td><a href="https://mstable.gitbook.io/assets/musd">docs</a></td></tr>
+          <tr><td><b>Angle</b> (USDA, EURA)</td><td>Transmuter, выкуп по номиналу</td><td>Отдельный токен-сбережение</td><td>Голосование о сворачивании, выкуп до 1 марта 2027. Маленькие стейблы умирают от неиспользования, а не только от взломов</td><td><a href="https://dlnews.com/articles/markets/angle-to-shutter-euro-stablecoin-eura/">DL News</a></td></tr>
+          <tr><td><b>crvUSD PegKeepers</b></td><td>Протокол сам минтит свой стейбл в стейбл-пулы. V2 блокирует вклад, если оракул пула расходится с другими пулами</td><td>—</td><td>Само обновление V2 вызвало депег в июне 2024</td><td><a href="https://docs.curve.finance/developer/crvusd/pegkeepers/peg-keeper-v2">PegKeeper v2</a> · <a href="https://gov.curve.fi/t/curve-grant-compensation-for-affected-users-of-the-june-12th-crvusd-de-peg-incident/10182">инцидент</a></td></tr>
+          <tr><td><b>Overnight USD+</b></td><td>Вкладывает в LP и кредитные протоколы</td><td>Ребейз</td><td>Терял на чужих протоколах (Sonne 2024, EraLend), ребейзил баланс вниз до резервов</td><td><a href="https://chain.link/article/overnight-stablecoin-usd-explained">Chainlink</a></td></tr>
+          <tr><td><b>Прототипы ETHGlobal 2026</b></td><td>USDa: хранилище в v4 USDC/USDT с ценой доли, выход в любом токене. UniSD: прототип на хуке</td><td>Рост цены доли</td><td>Не продакшен</td><td><a href="https://ethglobal.com/showcase/ascnt-vault-cfe4b">USDa</a> · <a href="https://ethglobal.com/showcase/unisd-au1uq">UniSD</a></td></tr>
+          <tr><td><b>Uniswap StablePair Hook</b></td><td>Хук динамической комиссии для USDC/USDT — механизм комиссии, а не стейбл. Кандидат в пулы, где хранилище держит ликвидность</td><td>—</td><td>—</td><td><a href="https://blog.uniswap.org/stablepair-hook-a-fee-that-moves-with-the-market">блог Uniswap</a></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout"><p><strong>Общий вывод.</strong> Все зрелые хранилища выдают выход в обоих токенах пропорционально; взламывали вход одним токеном и выпуск долей по споту. Ликвидность не трогают внутри пользовательской транзакции (OUSD). Узкий диапазон стейбл/стейбл при депеге превращает позицию целиком в слабый стейбл.</p></div>
+  </section>
+
+  <!-- ───────────── v3 params ───────────── -->
+  <section>
+    <div class="eyebrow">Что решить до спеки</div>
+    <h2>Параметры модели v3</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Параметр</th><th>Вопрос</th><th>Стартовое предложение</th></tr></thead>
+        <tbody>
+          <tr><td>Курс минта</td><td>Как совместить 1:1 и доход держателя</td><td><b>Решено 21.11:</b> noUSD на фактически положенную стоимость (своп платит минтер), один токен, без rebase; комиссии делит накопитель + <code>claim()</code></td></tr>
+          <tr><td>Куда ложится внесённое</td><td>Сразу в позицию или в idle</td><td><b>Решено 21.11:</b> сразу, в одной транзакции: своп в пуле A, добавление в пул B; своп невозможен — revert</td></tr>
+          <tr><td>Выбор пула</td><td>Куда класть, если пулов с одной парой несколько</td><td><b>Решено 21.11: гибрид.</b> Реестр — допуск (без хуков, разрешённые стейблы и ставки) и пределы (доля ≤ 30%, вес, минимум ликвидности); контракт — доходность из <code>feeGrowthGlobal</code> за 7 дней с поправкой на наш объём</td></tr>
+          <tr><td>Позиция вне диапазона</td><td>Что делать без оператора</td><td>Открыто: публичный перенос в пресет вокруг цены с проверкой оракулом</td></tr>
+          <tr><td>Диапазоны</td><td>Кто выбирает и какие</td><td>Пресеты в реестре, широкие (±1–2%), без оператора</td></tr>
+          <tr><td>Оценка NAV</td><td>Как считать стоимость позиций</td><td>Количество токенов — по цене оракула, а не спота (урок Gamma); каждый токен по <code>min(oracle, 1)</code>; на минте проверка «спот рядом с оракулом»</td></tr>
+          <tr><td>Комиссии в NAV</td><td>Вливать в тело на каждом mint/burn или считать на чтении</td><td>Вливать физически, учитывать счётчиком; газ растёт с числом позиций, поэтому лимит позиций (до 8)</td></tr>
+          <tr><td>Доля протокола</td><td>Брать ли процент с комиссий</td><td>Открыто: 0, или X% минтом noUSD в казну при вливании</td></tr>
+          <tr><td>Депег залога</td><td>Что происходит, если стейбл ушёл ниже порога</td><td>Минт этим стейблом стоп, burn работает, корзина с честной скидкой</td></tr>
+          <tr><td>Первый депозит</td><td>Защита от атаки инфляцией доли</td><td>Мёртвые доли при деплое (урок ERC-4626), округление против пользователя (урок Bunni)</td></tr>
+          <tr><td>Заблокированный получатель</td><td>Если перевод одного токена ревертит, ревертит весь burn</td><td>Получателя выбирает пользователь — этого достаточно для v1</td></tr>
+          <tr><td>Управление</td><td>Кто правит реестр</td><td><b>Переносится из 18.11:</b> мультисиг 2 из 3, ужесточение сразу, ослабление через timelock 48–72 ч; burn заблокировать нельзя</td></tr>
+          <tr><td>Активное хранилище</td><td>Второе хранилище с оператором и узкими диапазонами</td><td>Не в v1</td></tr>
+          <tr><td>PSM-хук 1:1</td><td>Нужен ли жёсткий пол $1</td><td><b>Этап 2</b>, скорее всего не нужен: пол держит burn</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <details class="archive">
+    <summary>Архив: модель A — менеджер на владельца + PSM-хук (решения 18.11)</summary>
+    <div class="archive-body">
+  <!-- ───────────── Section 1: architecture ───────────── -->
+  <section>
+    <div class="eyebrow">Модель A</div>
+    <h2>Кто с кем говорит</h2>
+    <p class="col">Пять контрактов и две роли. Фиолетовым — то, что делает только владелец менеджера. Реестр хранит, что разрешено, и проверяется при каждом минте. Залог (позиция) не покидает менеджер владельца.</p>
+    <div class="diagram" role="img" aria-label="Схема модели A: владелец, менеджер, Uniswap v4, реестр, фабрика, токен noUSD, рынок">
+      <svg viewBox="0 0 980 520" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="m-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-muted"/></marker>
+          <marker id="m-owner" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-owner"/></marker>
+          <marker id="m-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-accent"/></marker>
+        </defs>
+
+        <!-- Owner -->
+        <rect x="20" y="40" width="190" height="96" rx="8" class="box-owner"/>
+        <text x="36" y="66" class="t-title">Владелец</text>
+        <text x="36" y="88" class="t-small">держит NFT менеджера</text>
+        <text x="36" y="106" class="t-small">минтер noUSD</text>
+        <text x="36" y="124" class="t-small">получает 90% комиссий LP</text>
+
+        <!-- Manager -->
+        <rect x="300" y="20" width="320" height="196" rx="8" class="box-owner"/>
+        <text x="318" y="46" class="t-title">Менеджер (NFT, клон)</text>
+        <text x="318" y="70" class="t-mono">open / increase   → mint noUSD</text>
+        <text x="318" y="90" class="t-mono">close(recipient)  → burn noUSD</text>
+        <text x="318" y="110" class="t-mono">migrateIn(v3|v4 NFT) → mint</text>
+        <text x="318" y="130" class="t-mono">collectFees       → 10% в резерв PSM</text>
+        <text x="318" y="150" class="t-mono">withdrawIdle      → свободный остаток</text>
+        <line x1="318" y1="164" x2="602" y2="164" stroke="var(--line)"/>
+        <text x="318" y="184" class="t-small">хранит debt по каждой позиции</text>
+        <text x="318" y="202" class="t-small">операторов нет, executeBatch нет</text>
+
+        <!-- Uniswap -->
+        <rect x="720" y="30" width="240" height="110" rx="8" class="box"/>
+        <text x="736" y="56" class="t-title">Uniswap v4 PoolManager</text>
+        <text x="736" y="80" class="t-small">позиции менеджера:</text>
+        <text x="736" y="100" class="t-mono">USDC/USDT · DAI/USDC</text>
+        <text x="736" y="122" class="t-small">только пулы без хуков</text>
+
+        <!-- Registry -->
+        <rect x="300" y="300" width="320" height="150" rx="8" class="box-accent"/>
+        <text x="318" y="326" class="t-title">Реестр (Registry)</text>
+        <text x="318" y="350" class="t-small">разрешённые стейблы: decimals, оракул,</text>
+        <text x="318" y="368" class="t-small">порог депега, лимит долга, статус</text>
+        <text x="318" y="390" class="t-small">залог — стейбл с PSM-пулом; 2–3 пресета</text>
+        <text x="318" y="412" class="t-small">мультисиг 2/3; ослабление — через timelock</text>
+        <text x="318" y="430" class="t-small">burn и close не блокирует никогда</text>
+
+        <!-- Factory -->
+        <rect x="20" y="300" width="190" height="96" rx="8" class="box"/>
+        <text x="36" y="326" class="t-title">Фабрика</text>
+        <text x="36" y="350" class="t-small">создаёт менеджеры</text>
+        <text x="36" y="368" class="t-small">isManager(addr)</text>
+        <text x="36" y="386" class="t-small">имплементация неизменна</text>
+
+        <!-- noUSD -->
+        <rect x="720" y="230" width="240" height="96" rx="8" class="box-accent"/>
+        <text x="736" y="256" class="t-title">noUSD (ERC-20)</text>
+        <text x="736" y="280" class="t-small">mint / burn только</text>
+        <text x="736" y="298" class="t-small">менеджерам фабрики и PSM-хуку</text>
+        <text x="736" y="316" class="t-small">supply = Σ debt + выпуск хука</text>
+
+        <!-- Market -->
+        <rect x="720" y="400" width="240" height="100" rx="8" class="box"/>
+        <text x="736" y="426" class="t-title">Рынок и держатели</text>
+        <text x="736" y="450" class="t-small">пулы noUSD/USDC</text>
+        <text x="736" y="468" class="t-small">выкупить noUSD у протокола</text>
+        <text x="736" y="486" class="t-small">держатель не может</text>
+
+        <!-- Edges -->
+        <path d="M210 88 L296 88" class="edge-owner" marker-end="url(#m-owner)"/>
+        <text x="222" y="80" class="t-edge" style="fill:var(--owner)">вызовы</text>
+
+        <path d="M620 85 L716 85" class="edge" marker-end="url(#m-muted)"/>
+        <text x="630" y="77" class="t-edge">modify-</text>
+        <text x="630" y="103" class="t-edge">Liquidity</text>
+
+        <path d="M620 170 C 670 170, 670 270, 716 270" class="edge-accent" marker-end="url(#m-accent)"/>
+        <text x="640" y="230" class="t-edge" style="fill:var(--accent)">mint/burn</text>
+
+        <path d="M460 216 L460 296" class="edge-accent edge-dash" marker-end="url(#m-accent)"/>
+        <text x="470" y="252" class="t-edge" style="fill:var(--accent)">стейбл разрешён?</text>
+        <text x="470" y="270" class="t-edge" style="fill:var(--accent)">цена ≥ порога?</text>
+
+        <path d="M115 300 C 115 240, 250 200, 296 180" class="edge" marker-end="url(#m-muted)"/>
+        <text x="120" y="262" class="t-edge">создаёт</text>
+
+        <path d="M716 300 C 660 330, 400 470, 214 372" class="edge edge-dash" marker-end="url(#m-muted)"/>
+        <text x="236" y="452" class="t-edge">проверка: вызывающий — менеджер фабрики</text>
+
+        <path d="M840 326 L840 396" class="edge-accent" marker-end="url(#m-accent)"/>
+        <text x="850" y="366" class="t-edge" style="fill:var(--accent)">торгуется</text>
+
+        <path d="M115 136 C 115 190, 60 230, 60 240 C 60 470, 500 500, 716 470" class="edge-owner edge-dash" marker-end="url(#m-owner)"/>
+        <text x="40" y="226" class="t-edge" style="fill:var(--owner)">продаёт noUSD</text>
+      </svg>
+    </div>
+
+    <div class="grid4">
+      <div class="card">
+        <span class="tag owner">open</span>
+        <h3>Открыть позицию</h3>
+        <ol>
+          <li>Менеджер спрашивает реестр: оба стейбла пула разрешены, цена каждого по оракулу не ниже порога.</li>
+          <li>Добавляет ликвидность в пул v4.</li>
+          <li>Номинал внесённого (каждый стейбл = $1) записывает в <code>debt</code> позиции и минтит столько же noUSD владельцу.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag owner">close</span>
+        <h3>Закрыть позицию</h3>
+        <ol>
+          <li>Владелец сжигает долю <code>debt</code>, пропорциональную снимаемой ликвидности.</li>
+          <li>Активы из позиции уходят на адрес <code>recipient</code>. По умолчанию это сам менеджер: токены становятся свободным остатком. Можно указать свой кошелёк или любой адрес и закрыться одной транзакцией, без отдельного <code>withdrawIdle</code>.</li>
+          <li>Комиссии, накопленные позицией, уходят туда же.</li>
+          <li>Реестр это не останавливает ни при каком статусе стейбла.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag owner">migrateIn</span>
+        <h3>Принести свою LP</h3>
+        <ol>
+          <li>Владелец передаёт менеджеру NFT позиции v3 или v4 (только с адреса владельца).</li>
+          <li>Менеджер выводит ликвидность и сжигает чужую NFT.</li>
+          <li>Открывает свою позицию в разрешённом пуле v4 и минтит noUSD. Остаток падает на свободный баланс.</li>
+        </ol>
+      </div>
+      <div class="card">
+        <span class="tag good">collect</span>
+        <h3>Забрать комиссии</h3>
+        <ol>
+          <li>Комиссии пула идут владельцу целиком, без mint и burn.</li>
+          <li>Это и есть стимул минтить: залог продолжает зарабатывать.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── Section 2: peg mechanics ───────────── -->
+  <section>
+    <div class="eyebrow">Как держится $1</div>
+    <h2>Потолок работает сам, пол зависит от минтеров</h2>
+    <p class="col">В модели A у держателя noUSD нет права обменять токен на залог. Цена возвращается к $1 только потому, что кому-то выгодно минтить или сжигать.</p>
+    <div class="grid2">
+      <div class="card good">
+        <span class="tag good">потолок · цена выше $1</span>
+        <h3>noUSD стоит $1.02</h3>
+        <p>Любой, у кого есть USDC, открывает менеджер, вносит $1000, получает 1000 noUSD и продаёт их за $1020. Supply растёт, цена опускается.</p>
+        <p class="muted">Участвовать может кто угодно, ограничений нет. Механизм надёжный.</p>
+      </div>
+      <div class="card risk">
+        <span class="tag risk">пол · цена ниже $1</span>
+        <h3>noUSD стоит $0.97</h3>
+        <p>Выкупить дёшево и сжечь может только минтер, который и так хочет закрыть позицию: купит 1000 noUSD за $970 и заберёт $1000 стейблов.</p>
+        <p class="muted">Держателю нечего сделать, кроме как продать ещё дешевле. Если минтеры довольны комиссиями и не выходят, цену никто не поднимает.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── Section 3: floor risk ───────────── -->
+  <section>
+    <div class="eyebrow">Главный риск модели A</div>
+    <h2>Риск пола цены</h2>
+    <div class="callout"><p><strong>Пол держится на чужом желании выйти.</strong> Обеспечение есть, но доступа к нему у держателя нет. Скорость возврата к $1 равна скорости, с которой минтеры по своим причинам закрывают позиции.</p></div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Что усиливает риск</th><th>Почему</th></tr></thead>
+        <tbody>
+          <tr><td>Позиции доходные</td><td>Минтер получает комиссии и не торопится закрываться. Чем лучше продукт для минтера, тем слабее пол.</td></tr>
+          <tr><td>Большой supply против малого потока выходов</td><td>Распродажа 1% supply в день при выходах 0.2% в день: рынок не успевает поглотить, цена сползает.</td></tr>
+          <tr><td>Депег одного из залоговых стейблов</td><td>Минтеры с хорошим залогом выкупают дешёвый noUSD и выходят первыми. Остаётся плохой залог, и noUSD обесценивается дальше (adverse selection).</td></tr>
+          <tr><td>Интеграции</td><td>Кредитные рынки и агрегаторы смотрят на гарантию пола. Без неё noUSD получает худшие параметры залога или не листится.</td></tr>
+          <tr><td>Нет ликвидаций и входа в позицию</td><td>Это наш принцип, его не меняем. Значит, жёсткий пол может прийти только снаружи позиций.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Стресс-сценарий: A против A + PSM</h3>
+    <p class="col muted">Игрушечная модель для интуиции, не прогноз. Supply 10 млн noUSD. Несколько дней держатели продают, минтеры выходят с базовой скоростью и чуть быстрее при скидке. PSM выкупает всё, что ниже $0.999, пока у него есть резерв.</p>
+    <div class="sim">
+      <div class="controls">
+        <div class="ctl"><label for="s-sell">Распродажа, % supply в день <output id="o-sell"></output></label><input id="s-sell" type="range" min="0.2" max="3" step="0.1" value="1.2"></div>
+        <div class="ctl"><label for="s-days">Длина распродажи, дней <output id="o-days"></output></label><input id="s-days" type="range" min="2" max="20" step="1" value="8"></div>
+        <div class="ctl"><label for="s-exit">Выходы минтеров, % supply в день <output id="o-exit"></output></label><input id="s-exit" type="range" min="0.05" max="1" step="0.05" value="0.2"></div>
+        <div class="ctl"><label for="s-res">Резерв PSM, % supply <output id="o-res"></output></label><input id="s-res" type="range" min="0" max="20" step="0.5" value="5"></div>
+      </div>
+      <div class="chartbox">
+        <div class="legend">
+          <span><i class="sw" style="background:var(--risk)"></i>Модель A</span>
+          <span><i class="sw" style="background:var(--good)"></i>A + PSM</span>
+          <span><i class="sw" style="background:var(--muted);opacity:.5"></i>Распродажа идёт</span>
+        </div>
+        <svg id="chart" viewBox="0 0 640 300" role="img" aria-label="Цена noUSD по дням в двух моделях"></svg>
+        <div class="readout">
+          <div><small>Минимум, модель A</small><b id="r-a"></b></div>
+          <div><small>Минимум, A + PSM</small><b id="r-c"></b></div>
+          <div><small>Резерв PSM</small><b id="r-res"></b></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── Section 4: option C ───────────── -->
+  <section>
+    <div class="eyebrow">Опция C · выбрано: хук с двумя входами</div>
+    <h2>PSM как пул v4 с хуком 1:1</h2>
+    <p class="col">PSM живёт не в отдельном обменнике, а в пуле Uniswap v4 noUSD/USDC. Хук перехватывает каждый swap в <code>beforeSwap</code> и сам меняет 1:1 минус комиссия, кривая пула не участвует. Резерв принадлежит хуку, сторонних LP нет. Позиции менеджеров не трогаются, так что принцип «только владелец» сохраняется.</p>
+    <p class="col">У того же контракта есть прямой интерфейс <code>sell(stable, …)</code>/<code>buy(stable, …)</code> и view-методы <code>quote</code> и <code>pseudoTotalValueLocked</code>. Прямой вызов — тонкая обёртка: хук сам делает <code>unlock</code> и <code>swap</code> в своём пуле, поэтому курс, комиссия, оракул и лимиты считаются одним кодом в <code>beforeSwap</code>. Резерв лежит в PoolManager как ERC-6909 claims хука.</p>
+    <div class="callout"><p><strong>Как хук знает свои пулы.</strong> PoolManager вызывает <code>beforeInitialize(sender, key)</code> при создании любого пула с адресом хука. Хук пропускает создание, только если <code>sender</code> — владелец протокола, второй токен отмечен в реестре как стейбл резерва, а fee и tickSpacing равны константам хука, и пула для этого стейбла ещё нет. Поэтому ключ пула однозначно выводится из адреса стейбла: <code>PoolKey(sort(noUSD, stable), 0, TICK_SPACING, this)</code>. Отдельного списка пулов не нужно: прямой вызов получает адрес стейбла, путь через пул приносит ключ сам.</p></div>
+    <p class="col">Оба пути делят один резерв и одну комиссию. Так делают PSM-хуки, которые Uniswap уже маршрутизирует: LitePSM (DAI/USDS) и USDD PSM на mainnet. Базовые контракты Uniswap для этого (<code>BaseAggregatorHook</code>, <code>IAggregatorHook</code>) уже лежат у нас в зависимостях.</p>
+    <div class="callout"><p><strong>В чужие маршруты не идём.</strong> Пользователи меняют в нашем виджете, арбитражные боты зовут верифицированный контракт напрямую. Allowlist Uniswap и заявки агрегаторам не нужны. Если позже захотим листинг, форма хука его не закрывает: так уже маршрутизируются LitePSM и USDD PSM.</p></div>
+    <div class="diagram" role="img" aria-label="Схема PSM-хука: держатель и минтер меняют через виджет, хук делает unlock и swap в своём пуле в PoolManager, резерв пополняют владелец и комиссии LP, вывод буфера только после сворачивания">
+      <svg viewBox="0 0 980 600" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="n-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-muted"/></marker>
+          <marker id="n-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-good"/></marker>
+          <marker id="n-owner" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-owner"/></marker>
+          <marker id="n-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-accent"/></marker>
+        </defs>
+
+        <!-- callers -->
+        <rect x="20" y="30" width="200" height="96" rx="8" class="box"/>
+        <text x="36" y="56" class="t-title">Держатель, арбитражёр</text>
+        <text x="36" y="80" class="t-small">noUSD на рынке $0.97 →</text>
+        <text x="36" y="98" class="t-small">sell: получает USDC</text>
+        <text x="36" y="116" class="t-small">по $0.999</text>
+
+        <rect x="20" y="160" width="200" height="96" rx="8" class="box-owner"/>
+        <text x="36" y="186" class="t-title">Минтер</text>
+        <text x="36" y="210" class="t-small">buy: noUSD за USDC 1:1,</text>
+        <text x="36" y="228" class="t-small">сжигает в менеджере,</text>
+        <text x="36" y="246" class="t-small">закрывает позицию</text>
+
+        <!-- widget -->
+        <rect x="260" y="88" width="150" height="112" rx="8" class="box"/>
+        <text x="276" y="114" class="t-title">Наш виджет</text>
+        <text x="276" y="138" class="t-small">выбор стейбла,</text>
+        <text x="276" y="156" class="t-small">quote() и coverage()</text>
+        <text x="276" y="178" class="t-small">боты — напрямую</text>
+
+        <!-- hook -->
+        <rect x="470" y="20" width="490" height="214" rx="10" class="box-good"/>
+        <text x="488" y="46" class="t-title">PSM-хук · один на все стейблы</text>
+        <text x="488" y="70" class="t-mono">sell(stable, in, minOut, to) · buy(…) · quote()</text>
+        <text x="488" y="88" class="t-small">прямой вход = обёртка: unlock + swap в своём пуле</text>
+        <line x1="488" y1="100" x2="942" y2="100" stroke="var(--line)"/>
+        <text x="488" y="120" class="t-mono">beforeInitialize → только владелец, 1 пул на стейбл</text>
+        <text x="488" y="140" class="t-mono">beforeSwap → 1:1 · buy 0% · sell 0.1%</text>
+        <text x="488" y="160" class="t-mono">beforeAddLiquidity → revert (сторонних LP нет)</text>
+        <line x1="488" y1="174" x2="942" y2="174" stroke="var(--line)"/>
+        <text x="488" y="196" class="t-small">стейбл ниже порога по оракулу → buy за него закрыт</text>
+        <text x="488" y="216" class="t-small">sell открыт всегда, пока есть резерв</text>
+
+        <!-- pool manager -->
+        <rect x="470" y="282" width="490" height="140" rx="10" class="box"/>
+        <text x="488" y="308" class="t-title">Uniswap v4 PoolManager</text>
+        <text x="488" y="332" class="t-mono">noUSD/USDC · noUSD/USDT · noUSD/DAI</text>
+        <text x="488" y="352" class="t-mono">key = (noUSD, stable, fee 0, TICK, хук)</text>
+        <text x="488" y="376" class="t-small">резерв каждого стейбла — ERC-6909 claims хука</text>
+        <text x="488" y="396" class="t-small">запас выкупленного noUSD — общий, не сжигается</text>
+        <text x="488" y="414" class="t-small">slot0 ничего не значит, как оракул не годится</text>
+
+        <!-- registry -->
+        <rect x="470" y="470" width="236" height="114" rx="8" class="box-accent"/>
+        <text x="486" y="496" class="t-title">Реестр</text>
+        <text x="486" y="518" class="t-small">стейбл-залог — только если</text>
+        <text x="486" y="536" class="t-small">есть его PSM-пул</text>
+        <text x="486" y="554" class="t-small">комиссии, оракулы, пороги</text>
+        <text x="486" y="572" class="t-small">мультисиг 2/3 + timelock</text>
+
+        <!-- noUSD -->
+        <rect x="726" y="470" width="234" height="114" rx="8" class="box-accent"/>
+        <text x="742" y="496" class="t-title">noUSD</text>
+        <text x="742" y="518" class="t-small">минтят менеджеры — под LP,</text>
+        <text x="742" y="536" class="t-small">хук — под стейбл в резерве</text>
+        <text x="742" y="554" class="t-small">coverage = буфер /</text>
+        <text x="742" y="572" class="t-small">noUSD менеджеров, цель 5%</text>
+
+        <!-- funding -->
+        <rect x="20" y="290" width="400" height="140" rx="8" class="box"/>
+        <text x="36" y="316" class="t-title">Откуда резерв</text>
+        <text x="36" y="340" class="t-small">стартовый буфер — вносит только владелец протокола</text>
+        <text x="36" y="360" class="t-small">10% комиссий LP менеджеров → резерв своего стейбла</text>
+        <text x="36" y="380" class="t-small">комиссия sell 0.1%</text>
+        <text x="36" y="400" class="t-small">стейблы покупателей покрывают noUSD, выпущенный хуком</text>
+        <text x="36" y="420" class="t-small" style="fill:var(--muted)">вклады третьих лиц — отложены на v2</text>
+
+        <!-- withdrawal -->
+        <rect x="20" y="470" width="400" height="114" rx="8" class="box-risk"/>
+        <text x="36" y="496" class="t-title">Вывод буфера</text>
+        <text x="36" y="520" class="t-small">пока есть noUSD менеджеров — нельзя</text>
+        <text x="36" y="540" class="t-small">после сворачивания (их supply = 0) — через timelock</text>
+        <text x="36" y="560" class="t-small">coverage ниже цели — только сигнал в виджете</text>
+        <text x="36" y="578" class="t-small" style="fill:var(--risk)">резерв кончился → снова модель A</text>
+
+        <!-- edges -->
+        <path d="M220 78 C 240 78, 240 128, 256 128" class="edge" marker-end="url(#n-muted)"/>
+        <path d="M220 208 C 240 208, 240 168, 256 168" class="edge-owner" marker-end="url(#n-owner)"/>
+        <path d="M410 144 L 466 144" class="edge-good" marker-end="url(#n-good)"/>
+        <text x="418" y="136" class="t-edge" style="fill:var(--good)">sell/buy</text>
+        <path d="M620 234 L 620 278" class="edge-good" marker-end="url(#n-good)"/>
+        <text x="630" y="262" class="t-edge" style="fill:var(--good)">unlock + swap</text>
+        <path d="M820 282 L 820 238" class="edge-good edge-dash" marker-end="url(#n-good)"/>
+        <text x="830" y="262" class="t-edge" style="fill:var(--good)">beforeSwap</text>
+        <path d="M420 360 L 466 360" class="edge-good edge-dash" marker-end="url(#n-good)"/>
+        <text x="424" y="352" class="t-edge" style="fill:var(--good)">в резерв</text>
+        <path d="M588 422 L 588 466" class="edge-accent edge-dash" marker-end="url(#n-accent)"/>
+        <text x="598" y="450" class="t-edge" style="fill:var(--accent)">хук читает</text>
+        <path d="M843 422 L 843 466" class="edge-accent" marker-end="url(#n-accent)"/>
+        <text x="853" y="450" class="t-edge" style="fill:var(--accent)">mint при buy</text>
+      </svg>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>Отдельный PSM-контракт</th><th>PSM как пул v4 с хуком</th></tr></thead>
+        <tbody>
+          <tr><td>Откуда меняют люди</td><td>Наш виджет</td><td>Наш виджет; листинг в Uniswap остаётся возможным позже</td></tr>
+          <tr><td>Арбитраж пола</td><td>Прямой вызов, проще всего</td><td>Через unlock или через прямой вызов того же хука</td></tr>
+          <tr><td>Где ликвидность noUSD</td><td>Рынок отдельно, пол отдельно</td><td>Пол и основной рынок в одном месте</td></tr>
+          <tr><td>Как минтер закрывается</td><td>Отдельный вызов PSM</td><td>Обычный swap</td></tr>
+          <tr><td>Сложность кода</td><td>Простой обменник</td><td>Учёт дельт в <code>beforeSwap</code>: exactIn и exactOut, округление 6↔18 decimals</td></tr>
+          <tr><td>Обновление логики</td><td>Новый контракт</td><td>Новый хук, новый пул, перенос резерва</td></tr>
+          <tr><td>Цена в пуле</td><td>Нет пула</td><td><code>slot0</code> ничего не значит, как оракул пул использовать нельзя</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid2">
+      <div class="card good">
+        <span class="tag good">что даёт</span>
+        <ul>
+          <li>Жёсткий пол $1 − fee для любого держателя, пока резерв не исчерпан.</li>
+          <li>Пол виден в том же месте, где торгуются стейблы, без отдельных интеграций.</li>
+          <li>Замкнутый цикл: в стрессе пул выкупает noUSD у держателей, потом продаёт его минтерам, которые закрываются, и резерв возвращается.</li>
+          <li>Позиции менеджеров не трогаются никогда.</li>
+          <li>Опыт с хуками у команды есть: v4-хук с динамической комиссией из UHI9.</li>
+        </ul>
+      </div>
+      <div class="card risk">
+        <span class="tag risk">что продумать</span>
+        <ul>
+          <li>Котировка в виджете (<code>quote</code>) совпадает с исполнением до единицы: форк-тест exact-in и exact-out в обе стороны, через прямой вызов и через пул.</li>
+          <li>Разные decimals noUSD и USDC: <code>sqrtPrice</code> при создании пула ставить 1:1 с поправкой на decimals, чтобы пул не выглядел сломанным в эксплорерах и не закрыл листинг в будущем.</li>
+          <li>Хук без апгрейда и со статической комиссией: проще аудит и доверие ботов.</li>
+          <li>Учёт дельт — классическое место ошибок у таких хуков. Нужны аудит и fuzz-тест инварианта «резерв + запас noUSD ≥ выпущенного через пул».</li>
+          <li>Депег USDC: направление USDC → noUSD закрывается по оракулу из реестра.</li>
+          <li>На каждый стейбл резерва свой пул. Хук может быть один, лимиты в реестре.</li>
+          <li>Без дневного лимита на вывод: он защищает от эксплойта, но ослабляет пол в стрессе.</li>
+          <li>Резерв конечен и не зарабатывает. Риск noUSD в запасе ложится на капитал протокола.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+  <!-- ───────────── Section 5: open params ───────────── -->
+  <section>
+    <div class="eyebrow">Что решить дальше</div>
+    <h2>Параметры для следующего шага</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Параметр</th><th>Вопрос</th><th>Стартовое предложение</th></tr></thead>
+        <tbody>
+          <tr><td>Форма PSM</td><td>Хук, отдельный контракт или оба</td><td><b>Решено:</b> хук с двумя входами; прямой вход — обёртка над <code>unlock</code> + <code>swap</code> в своём пуле, один резерв</td></tr>
+          <tr><td>Пулы хука</td><td>Кто создаёт и как хук их находит</td><td><b>Решено:</b> создаёт только владелец протокола, проверка в <code>beforeInitialize</code>; один пул на стейбл, ключ выводится из адреса стейбла</td></tr>
+          <tr><td>Получатель при закрытии</td><td>Куда уходят активы позиции при burn</td><td><b>Решено:</b> параметр <code>recipient</code>, по умолчанию менеджер</td></tr>
+          <tr><td>Виджет обмена</td><td>Через какой путь идёт обмен и как показываем резерв</td><td>Прямой вызов хука; остаток резерва и лимит по стейблу видны в виджете</td></tr>
+          <tr><td>Комиссия PSM</td><td>Сколько брать за обмен в каждую сторону</td><td><b>Решено:</b> <code>buy</code> 0%, <code>sell</code> 0.1%, параметр в реестре; LP-fee пула = 0</td></tr>
+          <tr><td>Целевой резерв</td><td>Какую долю supply держать в PSM</td><td><b>Решено:</b> цель 5% от noUSD менеджеров, только сигнал: view <code>coverage()</code>, показ в виджете, минт не останавливается</td></tr>
+          <tr><td>Источник резерва</td><td>Кто наполняет буфер</td><td><b>Решено:</b> стартовый капитал владельца (довносит только владелец) + 10% комиссий LP менеджеров. Без mint-fee и stability fee</td></tr>
+          <tr><td>Вывод буфера</td><td>Может ли владелец забрать капитал обратно</td><td><b>Решено:</b> пока есть noUSD менеджеров — нельзя; после сворачивания (их supply = 0) — через timelock</td></tr>
+          <tr><td>Вклады третьих лиц в резерв</td><td>Пускать ли всех вкладывать в резерв за доход</td><td><b>Отложено на v2:</b> отдельное хранилище рядом с хуком, вывод своей доли всего содержимого, срок уведомления</td></tr>
+          <tr><td>Комиссии в токене без PSM-пула</td><td>Куда 10% комиссий в стейбле, для которого нет пула резерва</td><td><b>Решено:</b> стейбл-залог разрешается в реестре, только если для него уже есть PSM-пул; 10% комиссий всегда идут в резерв своего стейбла</td></tr>
+          <tr><td>Состав резерва</td><td>Какие стейблы и с какими лимитами</td><td>USDC и USDT, лимит на каждый</td></tr>
+          <tr><td>Диапазоны</td><td>Фиксированные на пул или свободные</td><td><b>Решено:</b> 2–3 пресета на пул в реестре, владелец выбирает</td></tr>
+          <tr><td>Пулы PSM</td><td>Какие пары открывать</td><td>noUSD/USDC, затем noUSD/USDT, один хук</td></tr>
+          <tr><td>Управление реестром</td><td>Мультисиг с timelock или неизменяемость</td><td><b>Решено:</b> мультисиг 2 из 3; ужесточение мгновенно (guardian), ослабление через timelock 48–72 ч; breaker по оракулу; close/burn и <code>sell</code> при наличии резерва заблокировать нельзя</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+    </div>
+  </details>
+
+  <footer>Редакция 21.11.2026: одно хранилище; минт одной транзакцией (проверки → комиссии до входа → своп в пуле A → добавление в пул B → noUSD на положенную стоимость), своп невозможен — revert; пул выбирает гибрид (реестр задаёт допуск и пределы, контракт — доходность из feeGrowthGlobal); комиссии делит накопитель с claim(); burn отдаёт долю всех позиций на выбранный адрес. Открыто: обмен по паритету между стейблами, начисления на адреса, которые не заберут, позиция вне диапазона. PSM-хук — этап 2. Модель A — в архиве.</footer>
+</main>
+
+<script>
+(function () {
+  var ids = ["sell", "days", "exit", "res"];
+  var el = {};
+  ids.forEach(function (k) { el[k] = document.getElementById("s-" + k); el["o" + k] = document.getElementById("o-" + k); });
+  var svg = document.getElementById("chart");
+  var W = 640, H = 300, L = 48, R = 14, T = 14, B = 34;
+  var DAYS = 45, YMIN = 0.85, YMAX = 1.01;
+  var NS = "http://www.w3.org/2000/svg";
+
+  function sim(sell, days, exit, reserve) {
+    var K = 0.5, FEE = 0.001;
+    var p = 1, res = reserve, inv = 0, out = [1], resOut = [res], minP = 1;
+    for (var d = 1; d <= DAYS; d++) {
+      var s = d <= days ? sell : 0;
+      var disc = Math.max(0, 1 - p);
+      var e = exit * (1 + 20 * disc);
+      var net = s - e;
+      if (reserve > 0) {
+        if (net > 0 && p <= 1 - FEE + 1e-9) {
+          var a = Math.min(net, res); res -= a; inv += a; net -= a;
+        } else if (net < 0 && inv > 0) {
+          var b = Math.min(-net, inv); inv -= b; res += b; net += b;
+        }
+      }
+      p = p - K * net / 100;
+      if (reserve > 0 && res > 0 && p < 1 - FEE) p = 1 - FEE;
+      if (p > 1) p = 1;
+      out.push(p); resOut.push(res); minP = Math.min(minP, p);
+    }
+    return { p: out, res: resOut, min: minP, left: res };
+  }
+
+  function x(d) { return L + (W - L - R) * d / DAYS; }
+  function y(v) { var c = Math.max(YMIN, Math.min(YMAX, v)); return T + (H - T - B) * (YMAX - c) / (YMAX - YMIN); }
+  function node(tag, attrs, text) {
+    var n = document.createElementNS(NS, tag);
+    for (var k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    svg.appendChild(n); return n;
+  }
+  function path(arr) { return arr.map(function (v, i) { return (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1); }).join(" "); }
+
+  function draw() {
+    var sell = +el.sell.value, days = +el.days.value, exit = +el.exit.value, res = +el.res.value;
+    el.osell.textContent = sell.toFixed(1) + "%";
+    el.odays.textContent = days;
+    el.oexit.textContent = exit.toFixed(2) + "%";
+    el.ores.textContent = res.toFixed(1) + "%";
+    var a = sim(sell, days, exit, 0), c = sim(sell, days, exit, res);
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    node("rect", { x: x(0), y: T, width: x(days) - x(0), height: H - T - B, style: "fill:var(--muted);opacity:.08" });
+    [0.86, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00].forEach(function (v) {
+      node("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), style: "stroke:var(--line);stroke-width:1" });
+      node("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", style: "font-size:11px;fill:var(--muted);font-family:var(--f-mono)" }, "$" + v.toFixed(2));
+    });
+    [0, 10, 20, 30, 40].forEach(function (d) {
+      node("text", { x: x(d), y: H - B + 18, "text-anchor": "middle", style: "font-size:11px;fill:var(--muted);font-family:var(--f-mono)" }, d === 0 ? "день 0" : d);
+    });
+    node("path", { d: path(a.p), style: "fill:none;stroke:var(--risk);stroke-width:2.4" });
+    node("path", { d: path(c.p), style: "fill:none;stroke:var(--good);stroke-width:2.4" });
+    var ia = a.p.indexOf(a.min);
+    node("circle", { cx: x(ia), cy: y(a.min), r: 4, style: "fill:var(--risk)" });
+    var low = a.min < YMIN;
+    document.getElementById("r-a").textContent = "$" + a.min.toFixed(3) + (low ? " (ниже шкалы)" : "");
+    document.getElementById("r-c").textContent = "$" + c.min.toFixed(3);
+    var exhausted = res > 0 && c.res.some(function (v) { return v <= 1e-9; });
+    var dayEx = exhausted ? c.res.findIndex(function (v) { return v <= 1e-9; }) : -1;
+    document.getElementById("r-res").textContent = res === 0 ? "нет" : (exhausted ? "кончился на дне " + dayEx : "хватило");
+    if (dayEx > 0) {
+      node("line", { x1: x(dayEx), x2: x(dayEx), y1: T, y2: H - B, style: "stroke:var(--good);stroke-dasharray:4 4;stroke-width:1.2" });
+      node("text", { x: x(dayEx) + 6, y: T + 14, style: "font-size:11px;fill:var(--good)" }, "резерв пуст");
+    }
+  }
+  ids.forEach(function (k) { el[k].addEventListener("input", draw); });
+  draw();
+})();
+</script>
