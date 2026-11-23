@@ -110,12 +110,17 @@ Invariant at every step: `supply + totalUnclaimed = value of the position bodies
 | matters for | fairness (the buy-before-sync attack targets the counter) | yield only |
 | mint | mandatory before entry, all positions | position B only (the add collects its fees) |
 | burn | mandatory before computing the share | all positions (burn touches each) |
-| quiet day | keeper at least daily; anyone may call | when uncollected fees exceed a threshold |
+| quiet day | keeper hourly on L2 (~$0.015/call), daily on Ethereum; anyone may call | when uncollected fees exceed a threshold |
 | gas, 8 positions (rough) | ~200–250k | ~0.7–1M |
+
+**Chains.** The main deployment is an L2; Ethereum mainnet is secondary (presence only — every
+operation costs ~500× more there). One codebase, per-chain parameters: keeper interval (1 h on L2,
+24 h on Ethereum), `compound()` threshold, and a sequencer-uptime check before the oracle on L2.
 
 Why daily is enough: buying noUSD on a DEX, calling `sync()` and selling pays only when the
 unsynced yield per noUSD exceeds the round-trip cost — ~1.75 days without sync in a 0.01 % pool,
-~9 days in a 0.05 % pool (at 5 % APR).
+~9 days in a 0.05 % pool (at 5 % APR). With hourly sync on L2 the attack needs ~40× more unsynced
+yield than can accumulate between calls.
 
 **Transfer gas (L, estimates from opcode prices, to be replaced by `forge snapshot`):** ~37k vs ~34.5k
 for a plain ERC-20 when no sync happened since the last touch; ~47k on the first transfer after a
@@ -201,6 +206,7 @@ Limit values are a starting proposal, to be fitted on real pool data.
 | 2026-11-21 | Mint in one transaction: swap in pool A, add in pool B, revert if impossible. No idle balance. |
 | 2026-11-21 | Pool selection: hybrid (registry admission + limits, on-chain yield signal). |
 | 2026-11-23 | noUSD is a separate ERC-20. Fee accounting variant L: transfers checkpoint both sides, only `sync()` moves the counter (on mint, burn, and a keeper at least daily). `compound()` is a separate, threshold-driven operation. Variant E (exact, transfer reads the pools) rejected on gas. |
+| 2026-11-23 | Main chain is an L2; Ethereum mainnet is secondary. Keeper `sync()` hourly on L2, daily on Ethereum; per-chain `compound()` threshold; sequencer-uptime check on L2. |
 | 2026-11-23 | Compared with Uniswap v2 LP tokens (share of reserves, price grows, no accounting needed). Open: is "noUSD ≈ $1" mandatory, or is a v2-style appreciating share acceptable? |
 
 ## Why the accumulator — simulation
