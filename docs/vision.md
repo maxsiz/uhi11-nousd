@@ -125,6 +125,49 @@ sync (both `accrued` slots written); +5k when an excluded address is involved. `
 * v4 facts this relies on: `Position.State = {liquidity, feeGrowthInside0/1LastX128}`;
   `modifyLiquidity` returns `callerDelta = principal + feesAccrued`.
 
+## Comparison with Uniswap v2 LP tokens
+
+A v2 LP token is also an ERC-20, yet needs no accumulator: it is a **share of reserves**, not a dollar
+claim (`UniswapV2Pair.sol`). Swap fees stay in the reserves (line 180), so every share appreciates in
+the same block; mint is at the current share price (line 123,
+`min(amount0 × supply / reserve0, amount1 × supply / reserve1)`); burn returns `liquidity × balance / supply`
+(line 144); transfer is a plain ERC-20. Fairness comes from the price, not from bookkeeping.
+
+Same example in v2 terms: share price 1.00000 → 1.00005 at 12:00 → 1.00010 at 24:00. Alice's 200k
+shares sent at 12:00 are worth $200 010 — her morning $10 travel inside the tokens (and are paid for
+if Carol bought them). Result: Alice $50, Bob $40, Carol $10 — exact.
+
+| | Share, v2-style (price grows) | noUSD, L (≈ $1) |
+|---|---|---|
+| token price | grows: 1.0001 after a day, ~1.05 after a year at 5 % | ≈ $1 |
+| where fees sit | v2: in reserves at once. On v4: next to the position, must be included in the share price at mint/burn | next to the position, accounted on `sync()` |
+| mint | at share price | at deposited value, `sync()` first |
+| burn | `x / supply` of value | `x / (supply + unclaimed)`, accrued stays |
+| transfer | plain ERC-20, ~34.5k | +2.4–12.4k |
+| per-address state | balance | balance, checkpoint, accrued |
+| paying out yield | not needed — it is in the price | `claim` in noUSD or burn with accrued in stables — open |
+| compounding | automatic | only via `claim` |
+| fairness | exact, through price | error between the two sides of a transfer |
+| buy-before-sync attack | none if mint/burn price includes uncollected fees | exists, unprofitable with daily `sync()` |
+| keeper | not needed | daily `sync()` |
+| contract holders (DEX, bridges) | yield grows in price, nothing lost | unclaimable accruals → exclusion list |
+| integrations | needs a share-price oracle (like wstETH, sDAI) | stable ≈ $1 |
+| product | yield-bearing share, not a stable | stable + yield |
+
+Why we differ: (1) the requirement "noUSD ≈ $1" — the v2 way is exactly the "mint at P = NAV/supply"
+option rejected on 2026-11-20; (2) since v3, fees live next to concentrated positions until collected,
+and Uniswap itself tracks them with the same pattern we use: `feeGrowthInside` is the global counter,
+`feeGrowthInsideLast` the checkpoint, `tokensOwed` the accrued slot. Variant L moves v3/v4 fee
+accounting from positions to token holders.
+
+Taken from v2 regardless of the choice: `_mintFee` (lines 89–107) as the protocol-share pattern —
+mint the treasury 1/6 of `√k` growth lazily, here on `sync()`; `MINIMUM_LIQUIDITY = 1000` locked at
+`address(0)` (lines 120–121) against share inflation; burn by actual balances, not cached reserves.
+
+**Open fork:** if "≈ $1" is mandatory, L stays. If an appreciating noUSD is acceptable, the v2 model
+removes accrued slots, `claim`, the keeper and the transfer error — but it is then a yield share like
+sDAI, and a stable on top of it would be a second token.
+
 ## Pool selection — hybrid (decided 2026-11-21)
 
 v4 has several pools with the same pair and different fee tiers and depth. On-chain we choose like this:
@@ -158,6 +201,7 @@ Limit values are a starting proposal, to be fitted on real pool data.
 | 2026-11-21 | Mint in one transaction: swap in pool A, add in pool B, revert if impossible. No idle balance. |
 | 2026-11-21 | Pool selection: hybrid (registry admission + limits, on-chain yield signal). |
 | 2026-11-23 | noUSD is a separate ERC-20. Fee accounting variant L: transfers checkpoint both sides, only `sync()` moves the counter (on mint, burn, and a keeper at least daily). `compound()` is a separate, threshold-driven operation. Variant E (exact, transfer reads the pools) rejected on gas. |
+| 2026-11-23 | Compared with Uniswap v2 LP tokens (share of reserves, price grows, no accounting needed). Open: is "noUSD ≈ $1" mandatory, or is a v2-style appreciating share acceptable? |
 
 ## Why the accumulator — simulation
 
