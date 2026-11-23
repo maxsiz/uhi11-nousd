@@ -133,7 +133,7 @@ footer { color: var(--muted); font-size: 0.88rem; max-width: 70ch; }
 
 <main>
   <header style="display:flex;flex-direction:column;gap:16px">
-    <div class="eyebrow">Сайд-проект · концепт · редакция 20.11.2026</div>
+    <div class="eyebrow">Сайд-проект · концепт · редакция 23.11.2026</div>
     <h1>noUSD: доля в общем хранилище стейбл-LP</h1>
     <p class="lede">Один менеджер — общее хранилище. Кто угодно вносит разрешённый стейбл и получает noUSD. В той же транзакции хранилище кладёт стейбл в одну из своих позиций в стейбл-пулах Uniswap v4: пул выбирают рамки реестра и доходность на чейне. noUSD выпускается на фактически положенную стоимость. Сжигая noUSD, держатель забирает свою долю всех позиций во всех токенах на адрес, который выберет сам. Комиссии делит накопитель, как <code>feeGrowth</code> в самом Uniswap: каждому — с момента его входа. PSM-хук перенесён на этап 2, модель A с отдельными менеджерами — в архиве внизу.</p>
     <div class="chips">
@@ -381,6 +381,183 @@ footer { color: var(--muted); font-size: 0.88rem; max-width: 70ch; }
     <div class="callout"><p><strong>Следующий вопрос — позиция вне диапазона.</strong> Пул, где цена ушла из пресета, выпадает на шаге «допуск»: минт туда не идёт, но и уже лежащая там ликвидность ничего не зарабатывает. Оператора нет, значит, нужен вызов, который может сделать кто угодно: перенести позицию в пресет вокруг текущей цены при проверке оракулом, по образцу <code>moveLiquidity</code>.</p></div>
   </section>
 
+
+  <!-- ───────────── v3 Section: fee accounting (L), sync / compound ───────────── -->
+  <section>
+    <div class="eyebrow">Решено 23.11 · noUSD — отдельный ERC-20 · учёт L · sync() отдельно от compound()</div>
+    <h2>Учёт комиссий: счётчик, копилки, sync() и compound()</h2>
+    <p class="col">Счётчик работает как показания электросчётчика. В токене один общий счётчик: сколько долларов комиссий заработал 1 noUSD с запуска. У каждого адреса есть отметка: какое показание было, когда адрес трогали последний раз. Пока баланс не меняется, доход адреса считается без записи: <code>баланс × (счётчик − отметка)</code>. Перед любой сменой баланса заработанное кладётся в копилку адреса, а отметка переставляется на текущее показание. Счётчик сдвигает только <code>sync()</code>: перевод его читает, но не двигает. Это вариант L. Вариант E, где каждый перевод сам читает пулы, отклонён и перенесён в архив внизу.</p>
+    <div class="diagram" role="img" aria-label="Что хранит токен и что делает transfer; ниже пошаговый прогон: перевод Alice Carol, sync кипером, сжигание Carol, claim Bob, с формулами и состоянием после каждого шага">
+      <svg viewBox="0 0 980 850" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="y-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-muted"/></marker>
+          <marker id="y-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah-accent"/></marker>
+        </defs>
+        <text x="20" y="28" class="t-title">Что лежит в токене и что делает transfer</text>
+
+        <rect x="20" y="44" width="290" height="160" rx="8" class="box-owner"/>
+        <text x="36" y="70" class="t-title">Общее, одно на токен</text>
+        <text x="36" y="94" class="t-small">счётчик: $ комиссий на 1 noUSD</text>
+        <text x="36" y="114" class="t-small">невыплачено всего (нужно для burn)</text>
+        <text x="36" y="134" class="t-small">баланс исключённых адресов</text>
+        <text x="36" y="162" class="t-small">transfer только читает;</text>
+        <text x="36" y="182" class="t-small">пишут sync() и claim()</text>
+
+        <rect x="345" y="44" width="290" height="160" rx="8" class="box-accent"/>
+        <text x="361" y="70" class="t-title">transfer(from, to, x)</text>
+        <text x="361" y="94" class="t-small">1 · прочитать счётчик</text>
+        <text x="361" y="114" class="t-small">2 · для from и для to:</text>
+        <text x="373" y="136" class="t-mono">копилка += бал × (сч − отм)</text>
+        <text x="373" y="156" class="t-mono">отметка = счётчик</text>
+        <text x="361" y="182" class="t-small">3 · перенести x, как в любом ERC-20</text>
+
+        <rect x="670" y="44" width="290" height="160" rx="8" class="box-good"/>
+        <text x="686" y="70" class="t-title">На каждый адрес — 2 слота</text>
+        <text x="686" y="94" class="t-mono">слот 1: баланс | отметка</text>
+        <text x="686" y="114" class="t-small">пишется всегда, как баланс в ERC-20,</text>
+        <text x="686" y="134" class="t-small">отметка упакована рядом — бесплатно</text>
+        <text x="686" y="162" class="t-mono">слот 2: копилка</text>
+        <text x="686" y="182" class="t-small">пишется, только если счётчик сдвинулся</text>
+
+        <path d="M312,124 L343,124" class="edge" marker-end="url(#y-muted)"/>
+        <path d="M637,124 L668,124" class="edge-accent" marker-end="url(#y-accent)"/>
+
+        <text x="20" y="246" class="t-title">Прогон: каждая цифра</text>
+        <text x="20" y="266" class="t-small">пулы приносят хранилищу $100 в сутки · счётчик — в $ на 1 млн noUSD · копилка += баланс × (счётчик − отметка) / 1 млн</text>
+        <rect x="20" y="278" width="940" height="40" rx="8" class="box"/>
+        <text x="36" y="303" class="t-mono">старт, сразу после sync: supply 1 000 000 · счётчик 0 · невыплачено 0 · Alice 600k (отм 0) · Bob 400k (отм 0)</text>
+
+        <!-- column heads -->
+        <text x="236" y="342" class="t-small">что считается</text>
+        <text x="704" y="342" class="t-small">состояние после</text>
+
+        <!-- row 1: transfer -->
+        <rect x="20" y="350" width="200" height="100" rx="8" class="box-accent"/>
+        <text x="36" y="376" class="t-title">12:00 · transfer</text>
+        <text x="36" y="398" class="t-small">Alice → Carol 200 000</text>
+        <text x="36" y="418" class="t-small">в пулах уже $50,</text>
+        <text x="36" y="436" class="t-small">счётчик их не видит</text>
+        <rect x="236" y="350" width="452" height="100" rx="8" class="box"/>
+        <text x="252" y="374" class="t-mono">Alice: коп += 600 000 × (0 − 0) / 1 млн = $0</text>
+        <text x="300" y="394" class="t-mono">отм = 0 · баланс 600 000 → 400 000</text>
+        <text x="252" y="418" class="t-mono">Carol: коп += 0 × (0 − 0) = $0</text>
+        <text x="300" y="438" class="t-mono">отм = 0 · баланс 0 → 200 000</text>
+        <rect x="704" y="350" width="256" height="100" rx="8" class="box"/>
+        <text x="720" y="374" class="t-mono">счётчик 0 · невыпл. $0</text>
+        <text x="720" y="394" class="t-mono">Alice 400k · отм 0 · коп 0</text>
+        <text x="720" y="414" class="t-mono">Bob   400k · отм 0 · коп 0</text>
+        <text x="720" y="434" class="t-mono">Carol 200k · отм 0 · коп 0</text>
+        <path d="M120,452 L120,460" class="edge" marker-end="url(#y-muted)"/>
+
+        <!-- row 2: sync -->
+        <rect x="20" y="462" width="200" height="100" rx="8" class="box-good"/>
+        <text x="36" y="488" class="t-title">24:00 · sync()</text>
+        <text x="36" y="510" class="t-small">кипер, тихий день</text>
+        <text x="36" y="530" class="t-small">токены не двигаются,</text>
+        <text x="36" y="548" class="t-small">только чтение пулов</text>
+        <rect x="236" y="462" width="452" height="100" rx="8" class="box"/>
+        <text x="252" y="486" class="t-mono">в позициях с прошлого sync: 60 USDC + 40 USDT</text>
+        <text x="252" y="506" class="t-mono">F = 60·min(p_USDC, 1) + 40·min(p_USDT, 1) = $100</text>
+        <text x="252" y="526" class="t-mono">Δсчётчика = F / (supply − исключённые) = 100 / 1 млн</text>
+        <text x="252" y="546" class="t-mono">невыплачено += F</text>
+        <rect x="704" y="462" width="256" height="100" rx="8" class="box"/>
+        <text x="720" y="486" class="t-mono">счётчик 0 → 100</text>
+        <text x="720" y="506" class="t-mono">невыплачено $100</text>
+        <text x="720" y="526" class="t-mono">балансы, отметки — те же</text>
+        <text x="720" y="546" class="t-mono">комиссии лежат в позициях</text>
+        <path d="M120,564 L120,572" class="edge" marker-end="url(#y-muted)"/>
+
+        <!-- row 3: burn -->
+        <rect x="20" y="574" width="200" height="100" rx="8" class="box"/>
+        <text x="36" y="600" class="t-title">24:05 · burn</text>
+        <text x="36" y="622" class="t-small">Carol сжигает 100 000</text>
+        <text x="36" y="642" class="t-small">внутри: sync (новых ≈ 0)</text>
+        <text x="36" y="660" class="t-small">и compound всех позиций</text>
+        <rect x="236" y="574" width="452" height="100" rx="8" class="box"/>
+        <text x="252" y="598" class="t-mono">Carol: коп += 200 000 × (100 − 0) / 1 млн = $20</text>
+        <text x="252" y="618" class="t-mono">s = 100 000 / (supply 1 000 000 + невыпл. 100)</text>
+        <text x="252" y="638" class="t-mono">compound: тело + комиссии = $1 000 100</text>
+        <text x="252" y="658" class="t-mono">Carol забирает s × 1 000 100 = $100 000 токенами</text>
+        <rect x="704" y="574" width="256" height="100" rx="8" class="box"/>
+        <text x="720" y="598" class="t-mono">supply 900 000</text>
+        <text x="720" y="618" class="t-mono">Carol 100k · отм 100 · коп $20</text>
+        <text x="720" y="638" class="t-mono">тело $900 100</text>
+        <text x="720" y="658" class="t-mono">900 000 + 100 = 900 100 ✓</text>
+        <path d="M120,676 L120,684" class="edge" marker-end="url(#y-muted)"/>
+
+        <!-- row 4: claim -->
+        <rect x="20" y="686" width="200" height="100" rx="8" class="box"/>
+        <text x="36" y="712" class="t-title">24:10 · claim()</text>
+        <text x="36" y="734" class="t-small">Bob забирает доход</text>
+        <text x="36" y="754" class="t-small">новых денег не нужно:</text>
+        <text x="36" y="772" class="t-small">обеспечение уже в теле</text>
+        <rect x="236" y="686" width="452" height="100" rx="8" class="box"/>
+        <text x="252" y="710" class="t-mono">Bob: коп += 400 000 × (100 − 0) / 1 млн = $40</text>
+        <text x="252" y="730" class="t-mono">минт 40 noUSD → Bob · коп → 1 wei · отм = 100</text>
+        <text x="252" y="750" class="t-mono">невыплачено = 100 − 40 = $60</text>
+        <text x="252" y="770" class="t-mono">(Alice $40 + Carol $20 ещё ждут claim)</text>
+        <rect x="704" y="686" width="256" height="100" rx="8" class="box"/>
+        <text x="720" y="710" class="t-mono">supply 900 040</text>
+        <text x="720" y="730" class="t-mono">невыплачено $60</text>
+        <text x="720" y="750" class="t-mono">тело $900 100</text>
+        <text x="720" y="770" class="t-mono">900 040 + 60 = 900 100 ✓</text>
+
+        <rect x="20" y="798" width="940" height="46" rx="8" class="box-risk"/>
+        <text x="36" y="818" class="t-mono">итог: Alice $40 · Bob $40 · Carol $20 = $100 — ровно столько заработали пулы</text>
+        <text x="36" y="836" class="t-small">перекос L: $10 утреннего дохода Alice ушли Carol = 200 000 × $50 / 1 млн (несобранное в момент перевода) · Bob не переводил — получил точно</text>
+      </svg>
+    </div>
+
+    <p class="col">Инвариант, который проверяется на каждом шаге: <code>supply + невыплачено = стоимость тела позиций</code>. Минт добавляет к обеим сторонам положенную стоимость. Сжигание забирает долю <code>s = x / (supply + невыплачено)</code> из тела и уменьшает supply на x. <code>sync()</code> добавляет F к «невыплачено»: эти F уже лежат в позициях как несобранная комиссия. <code>claim()</code> переносит сумму из «невыплачено» в supply. Честный дележ этого прогона по капиталу и времени — Alice $50, Bob $40, Carol $10. L ошибается только между сторонами перевода и не больше, чем на <code>сумма перевода × несобранный доход на 1 noUSD</code>.</p>
+
+    <h3>sync() и compound() — разные операции</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th></th><th>sync() — учёт</th><th>compound() — реинвест</th></tr></thead>
+        <tbody>
+          <tr><td>Что делает</td><td>Читает в PoolManager <code>feeGrowthInside</code> против <code>feeGrowthInsideLast</code> каждой позиции, оценивает новое по <code>min(oracle, 1)</code>, сдвигает счётчик, запоминает, сколько учтено. Токены не двигаются</td><td><code>modifyLiquidity</code> по позиции: v4 отдаёт все её комиссии (<code>callerDelta = principal + feesAccrued</code>), хранилище кладёт их обратно как ликвидность</td></tr>
+          <tr><td>От чего зависит</td><td>Справедливость: атака «купить перед сбором» работает против счётчика</td><td>Только доходность: несобранная комиссия не работает, но и не теряется</td></tr>
+          <tr><td>Минт</td><td>Обязателен перед входом, по всем позициям</td><td>Только позиция B: добавление само забирает её комиссии</td></tr>
+          <tr><td>Сжигание</td><td>Обязателен перед расчётом доли</td><td>Сам по всем позициям: сжигание трогает каждую, остаток комиссий ложится обратно</td></tr>
+          <tr><td>Тихий день</td><td>Кипер раз в сутки (Gelato, Chainlink Automation или наш сервис). Любой может вызвать сам, например продавец перед крупной продажей: в L теряет именно отправитель</td><td>Когда несобранная комиссия позиции выше порога (например, $50), чтобы газ окупался</td></tr>
+          <tr><td>Газ, 8 позиций (грубо)</td><td class="num">~200–250k · Ethereum ~$6–7 · L2 доли цента</td><td class="num">~0.7–1 млн · Ethereum ~$20–30 · L2 центы</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col muted">Остаток при реинвесте. Комиссия приходит в двух токенах в случайной пропорции, а позиция просит свою, поэтому остаток не вложится без свопа. У стейбл-пулов с диапазоном ±1–2% он мал. Его можно держать до следующего compound и включать в стоимость тела: счётчик он не задевает, эти деньги уже учтены. Другой путь — менять остаток свопом с проверкой оракулом.</p>
+
+    <h3>Газ на transfer в L</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Случай</th><th>Обычный ERC-20</th><th>noUSD (L)</th><th>Откуда разница</th></tr></thead>
+        <tbody>
+          <tr><td>Обе стороны уже держатели, sync с их прошлого касания не было</td><td class="num">~34.5k</td><td class="num">~37k (+2.4k)</td><td>холодное чтение счётчика 2 100 + арифметика; отметка пишется в одном слоте с балансом</td></tr>
+          <tr><td>Первый перевод после sync: у обеих сторон есть что положить в копилку</td><td class="num">~34.5k</td><td class="num">~47k (+12.4k)</td><td>+5k на сторону: чтение и запись копилки</td></tr>
+          <tr><td>Получатель новый (баланс был 0)</td><td class="num">~51.5k</td><td class="num">~54k (+2.4k)</td><td>у нулевого баланса копилка не растёт, слот 2 не пишется</td></tr>
+          <tr><td>Одна сторона — исключённый адрес (пул DEX)</td><td class="num">как выше</td><td class="num">ещё +5k</td><td>запись баланса исключённых; флаг «исключён» лежит в слоте 1</td></tr>
+          <tr><td>Ethereum, 10 gwei, ETH $3 000</td><td class="num">~$1.04</td><td class="num">+$0.07…0.37</td><td>на L2 разница меньше цента</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col muted">Если копилка была ровно 0, первая запись стоит 22k, поэтому <code>claim()</code> оставляет в ней 1 wei. Оценки — по ценам опкодов, не по замеру; после первой реализации заменим на <code>forge snapshot</code>.</p>
+
+    <div class="grid2">
+      <div class="card risk">
+        <span class="tag risk">L · чем рискуем</span>
+        <h3>Купить перед sync, продать после</h3>
+        <p>Mallory видит, что sync не было сутки, покупает noUSD на DEX, сам вызывает <code>sync()</code> и продаёт.</p>
+        <p>Supply 1.5 млн, из них 500k лежит в пуле DEX noUSD/USDC (исключённый адрес), держатели — 1 млн. Доход 5% годовых → $137 в сутки. Mallory покупает 200k: в пуле остаётся 300k, считаются 1.2 млн. sync: счётчик += 137 / 1.2 млн, Mallory получает 200k × 137 / 1.2 млн ≈ <strong>$23</strong>. Два свопа по 0.01% стоят <strong>$40</strong> плюс проскальзывание — убыток.</p>
+        <p>Окупается, когда несобранный доход на 1 noUSD больше цены круга через DEX: в пуле 0.01% — после ~1.75 суток без sync, в пуле 0.05% — после ~9 суток. Отсюда кипер раз в сутки.</p>
+      </div>
+      <div class="card">
+        <span class="tag">E · отклонён</span>
+        <h3>Почему не точный учёт</h3>
+        <p>E даёт честный дележ до цента: каждый перевод сам читает рост комиссий в PoolManager. Но это ~23k газа на позицию, то есть transfer около 235k при 8 позициях вместо ~37k. Токен начинает зависеть от PoolManager, а интеграции с лимитом газа на перевод ломаются. Выигрыш — доля базисного пункта на переведённую сумму. Прогон E и сравнение газа — в архиве внизу страницы.</p>
+      </div>
+    </div>
+    <div class="callout"><p><strong>На чём держится справедливость.</strong> Два правила. Перед любым изменением supply (минт, сжигание, <code>claim</code>) хранилище делает <code>sync()</code>. Перед любым изменением баланса токен кладёт заработанное в копилку и переставляет отметку. Плюс кипер делает <code>sync()</code> не реже раза в сутки, поэтому несобранное никогда не превышает суточного дохода.</p></div>
+  </section>
+
   <!-- ───────────── v3 Section 2: peg ───────────── -->
   <section>
     <div class="eyebrow">Как держится цена</div>
@@ -546,7 +723,7 @@ footer { color: var(--muted); font-size: 0.88rem; max-width: 70ch; }
       </div>
     </div>
     <div class="callout"><p><strong>Что сходится.</strong> С эталоном совпадает только C2, это видно по построению. Флеш-кредит и снимок закрывает и C. B на чейн ставить нельзя. Решение 21.11 делает C точной: минт одной транзакцией убирает «ждёт deploy», и каждый noUSD работает с выпуска. Противоречия 3 и 4 это не снимает.</p></div>
-    <p class="col muted">Ограничения модели: пул всегда в диапазоне, без депега и без переводов noUSD; газ не учитывается; атакующие ведут себя по одной фиксированной стратегии. Скрипт <code>docs/simulation/sim2.py</code>, seed 20261120, на основе <code>nousd_monte_carlo.py</code>.</p>
+    <p class="col muted">Ограничения модели: пул всегда в диапазоне, без депега и без переводов noUSD; газ не учитывается; атакующие ведут себя по одной фиксированной стратегии. Скрипт <code>mc/sim2.py</code> в рабочей папке, seed 20261120, на основе <code>nousd_monte_carlo.py</code>.</p>
   </section>
 
   <!-- ───────────── Section: prior art ───────────── -->
@@ -598,6 +775,7 @@ footer { color: var(--muted); font-size: 0.88rem; max-width: 70ch; }
           <tr><td>Курс минта</td><td>Как совместить 1:1 и доход держателя</td><td><b>Решено 21.11:</b> noUSD на фактически положенную стоимость (своп платит минтер), один токен, без rebase; комиссии делит накопитель + <code>claim()</code></td></tr>
           <tr><td>Куда ложится внесённое</td><td>Сразу в позицию или в idle</td><td><b>Решено 21.11:</b> сразу, в одной транзакции: своп в пуле A, добавление в пул B; своп невозможен — revert</td></tr>
           <tr><td>Выбор пула</td><td>Куда класть, если пулов с одной парой несколько</td><td><b>Решено 21.11: гибрид.</b> Реестр — допуск (без хуков, разрешённые стейблы и ставки) и пределы (доля ≤ 30%, вес, минимум ликвидности); контракт — доходность из <code>feeGrowthGlobal</code> за 7 дней с поправкой на наш объём</td></tr>
+          <tr><td>Учёт на transfer</td><td>Когда токен узнаёт о комиссиях</td><td>Решено 23.11: L — счётчик сдвигает только <code>sync()</code>, перевод кладёт заработанное в копилку и переставляет отметку (+2–12k газа). <code>sync()</code> на минте, сжигании и кипером раз в сутки; <code>compound()</code> отдельно — на сжигании, в позицию B на минте и по порогу. E — в архиве</td></tr>
           <tr><td>Позиция вне диапазона</td><td>Что делать без оператора</td><td>Открыто: публичный перенос в пресет вокруг цены с проверкой оракулом</td></tr>
           <tr><td>Диапазоны</td><td>Кто выбирает и какие</td><td>Пресеты в реестре, широкие (±1–2%), без оператора</td></tr>
           <tr><td>Оценка NAV</td><td>Как считать стоимость позиций</td><td>Количество токенов — по цене оракула, а не спота (урок Gamma); каждый токен по <code>min(oracle, 1)</code>; на минте проверка «спот рядом с оракулом»</td></tr>
@@ -1001,7 +1179,60 @@ footer { color: var(--muted); font-size: 0.88rem; max-width: 70ch; }
     </div>
   </details>
 
-  <footer>Редакция 21.11.2026: одно хранилище; минт одной транзакцией (проверки → комиссии до входа → своп в пуле A → добавление в пул B → noUSD на положенную стоимость), своп невозможен — revert; пул выбирает гибрид (реестр задаёт допуск и пределы, контракт — доходность из feeGrowthGlobal); комиссии делит накопитель с claim(); burn отдаёт долю всех позиций на выбранный адрес. Открыто: обмен по паритету между стейблами, начисления на адреса, которые не заберут, позиция вне диапазона. PSM-хук — этап 2. Модель A — в архиве.</footer>
+  <details class="archive">
+    <summary>Архив: вариант E — каждый transfer сам читает пулы (отклонён 23.11)</summary>
+    <div class="archive-body">
+      <section>
+        <p class="col">Пример тот же, что в разделе про учёт: supply 1 млн, Alice 600k, Bob 400k, пулы приносят $100 в сутки, в 12:00 Alice переводит 200k Carol. В E перевод сам читает в PoolManager, сколько заработали позиции, и сдвигает счётчик до текущей секунды.</p>
+        <div class="diagram" role="img" aria-label="Вариант E: в 12:00 перевод читает пулы, счётчик становится 50, Alice получает 30 долларов в копилку; к концу суток Alice 50, Bob 40, Carol 10 — честное деление">
+          <svg viewBox="0 0 980 190" xmlns="http://www.w3.org/2000/svg">
+            <rect x="8" y="8" width="964" height="170" rx="10" class="box-good"/>
+            <text x="24" y="32" class="t-title">E · точный: каждый transfer сам читает пулы</text>
+            <text x="285" y="64" class="t-small" text-anchor="middle">+$50 копится в пулах</text>
+            <text x="695" y="64" class="t-small" text-anchor="middle">+$50 копится в пулах</text>
+            <path d="M80,74 L900,74" class="edge"/>
+            <circle cx="80" cy="74" r="6" class="fill-good"/>
+            <circle cx="490" cy="74" r="6" class="fill-good"/>
+            <circle cx="900" cy="74" r="6" class="fill-good"/>
+            <text x="80" y="98" class="t-small">сутки 0 · sync</text>
+            <text x="80" y="116" class="t-mono">счётчик 0</text>
+            <text x="490" y="98" class="t-small" text-anchor="middle">12:00 · Alice → Carol 200k</text>
+            <text x="490" y="116" class="t-mono" text-anchor="middle">читает пулы: +$50 → счётчик 50</text>
+            <text x="490" y="134" class="t-small" text-anchor="middle">Alice: 600k × 50 / 1 млн = $30 в копилку</text>
+            <text x="900" y="98" class="t-small" text-anchor="end">сутки 1 · sync +$50</text>
+            <text x="900" y="116" class="t-mono" text-anchor="end">счётчик 50 → 100</text>
+            <text x="24" y="164" class="t-mono">итог: Alice $50 · Bob $40 · Carol $10</text>
+            <text x="330" y="164" class="t-small">ровно по капиталу × времени · газ transfer +~200k при 8 позициях</text>
+          </svg>
+        </div>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Момент</th><th>Что происходит</th><th>Счётчик</th><th>Alice: баланс · отметка · копилка</th><th>Bob</th><th>Carol</th></tr></thead>
+            <tbody>
+              <tr><td>сутки 0</td><td>sync</td><td class="num">0</td><td>600k · 0 · $0</td><td>400k · 0 · $0</td><td>—</td></tr>
+              <tr><td>12:00</td><td>Alice → Carol 200k. Перевод читает рост комиссий всех позиций: +$50, счётчик += 50 / 1 млн. Alice: 600k × 50 / 1 млн = $30 в копилку. Carol входит с отметкой 50</td><td class="num">50</td><td>400k · 50 · $30</td><td>400k · 0 · $0</td><td>200k · 50 · $0</td></tr>
+              <tr><td>сутки 1</td><td>sync: из пулов $100, но $50 уже учтены. Счётчик += 50 / 1 млн</td><td class="num">100</td><td>$30 + 400k × 50 / 1 млн = <strong>$50</strong></td><td><strong>$40</strong></td><td>200k × 50 / 1 млн = <strong>$10</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="col">Чтобы узнать заработанное, перевод читает через <code>extsload</code> около 10 слотов на позицию: тик пула, <code>feeGrowthGlobal0/1</code>, <code>feeGrowthOutside0/1</code> нижнего и верхнего тика, ликвидность и <code>feeGrowthInside0/1Last</code> позиции. Холодное чтение стоит 2 100 газа, итого ~21k плюс ~2k на арифметику X128 — ~23k на позицию. Комиссии между sync он считает по $1 за токен: оракул добавил бы ещё ~5–7k на стейбл.</p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Случай</th><th>Обычный ERC-20</th><th>L</th><th>E, 3 позиции</th><th>E, 8 позиций</th></tr></thead>
+            <tbody>
+              <tr><td>sync с прошлого касания не было</td><td class="num">~34.5k</td><td class="num">~37k</td><td class="num">~115k</td><td class="num">~235k</td></tr>
+              <tr><td>Первый перевод после sync</td><td class="num">~34.5k</td><td class="num">~47k</td><td class="num">~125k</td><td class="num">~245k</td></tr>
+              <tr><td>Ethereum, 10 gwei, ETH $3 000</td><td class="num">~$1.04</td><td class="num">+$0.07…0.37</td><td class="num">+~$2.4</td><td class="num">+~$6</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="col">Почему отклонён. Газ перевода растёт в 3–7 раз и с каждой новой позицией. Токен зависит от PoolManager. Мосты и контракты с фиксированным лимитом газа на перевод токена ломаются. Выигрыш перед L — несобранный доход на переведённую сумму, а при sync раз в сутки это не больше ~0.014%.</p>
+      </section>
+    </div>
+  </details>
+
+
+  <footer>Редакция 23.11.2026: noUSD — отдельный ERC-20; учёт L: на transfer обе стороны кладут заработанное в копилку и переставляют отметку, счётчик сдвигает только sync() (минт, сжигание, кипер раз в сутки); compound() отдельно. Вариант E — в архиве. Ранее, 21.11: одно хранилище; минт одной транзакцией (проверки → комиссии до входа → своп в пуле A → добавление в пул B → noUSD на положенную стоимость), своп невозможен — revert; пул выбирает гибрид (реестр задаёт допуск и пределы, контракт — доходность из feeGrowthGlobal); комиссии делит накопитель с claim(); burn отдаёт долю всех позиций на выбранный адрес. Открыто: обмен по паритету между стейблами, начисления на адреса, которые не заберут, позиция вне диапазона. PSM-хук — этап 2. Модель A — в архиве.</footer>
 </main>
 
 <script>
