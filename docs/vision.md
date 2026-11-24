@@ -150,7 +150,7 @@ if Carol bought them). Result: Alice $50, Bob $40, Carol $10 — exact.
 | burn | `x / supply` of value | `x / (supply + unclaimed)`, accrued stays |
 | transfer | plain ERC-20, ~34.5k | +2.4–12.4k |
 | per-address state | balance | balance, checkpoint, accrued |
-| paying out yield | not needed — it is in the price | `claim` in noUSD or burn with accrued in stables — open |
+| paying out yield | not needed — it is in the price | `claim()` pays accrued in stables, pro-rata from all positions (decided 2026-11-24) |
 | compounding | automatic | only via `claim` |
 | fairness | exact, through price | error between the two sides of a transfer |
 | buy-before-sync attack | none if mint/burn price includes uncollected fees | exists, unprofitable with daily `sync()` |
@@ -169,7 +169,7 @@ Taken from v2 regardless of the choice: `_mintFee` (lines 89–107) as the proto
 mint the treasury 1/6 of `√k` growth lazily, here on `sync()`; `MINIMUM_LIQUIDITY = 1000` locked at
 `address(0)` (lines 120–121) against share inflation; burn by actual balances, not cached reserves.
 
-**Open fork:** if "≈ $1" is mandatory, L stays. If an appreciating noUSD is acceptable, the v2 model
+**Resolved 2026-11-24:** 1 noUSD = 1 stable of the basket (not 1 USD), so L stays. Before that: if "≈ $1" is mandatory, L stays. If an appreciating noUSD is acceptable, the v2 model
 removes accrued slots, `claim`, the keeper and the transfer error — but it is then a yield share like
 sDAI, and a stable on top of it would be a second token.
 
@@ -207,6 +207,7 @@ Limit values are a starting proposal, to be fitted on real pool data.
 | 2026-11-21 | Pool selection: hybrid (registry admission + limits, on-chain yield signal). |
 | 2026-11-23 | noUSD is a separate ERC-20. Fee accounting variant L: transfers checkpoint both sides, only `sync()` moves the counter (on mint, burn, and a keeper at least daily). `compound()` is a separate, threshold-driven operation. Variant E (exact, transfer reads the pools) rejected on gas. |
 | 2026-11-23 | Main chain is an L2; Ethereum mainnet is secondary. Keeper `sync()` hourly on L2, daily on Ethereum; per-chain `compound()` threshold; sequencer-uptime check on L2. |
+| 2026-11-24 | 1 noUSD = 1 stable at par, not 1 USD; oracle only as a depeg breaker. `claim()` pays in stables. Protocol fee parameter up to 10 %, 0 at launch. Recenter path required (design open). |
 | 2026-11-23 | Compared with Uniswap v2 LP tokens (share of reserves, price grows, no accounting needed). Open: is "noUSD ≈ $1" mandatory, or is a v2-style appreciating share acceptable? |
 
 ## Why the accumulator — simulation
@@ -227,19 +228,23 @@ that is why it was chosen. Full results: [`simulation/sim2.json`](simulation/sim
 
 ## Open questions
 
-1. **Par arbitrage inside the depeg threshold.** If USDT trades at $0.999, minting with USDT and
-   burning into a basket that holds USDC is a free swap at par, draining good stables from all
-   positions. Options: mint at `min(oracle, 1)`, or a mint/burn fee. Both are now possible since
-   strict 1:1 is gone.
-2. **Accrual to addresses that will never claim** (DEX pools, bridges, other contracts). Needs an
-   exclusion list with redistribution — governance surface.
-3. **Position out of range with no operator.** Proposal: a permissionless call that moves such a
-   position into a preset around the current price, oracle-checked (modelled on an existing
-   `moveLiquidity` design).
-4. **Protocol share** of fees: 0, or X % minted as noUSD to a treasury on each collection.
-5. **First deposit:** dead shares at deployment (ERC-4626 inflation lesson), rounding against the user
+Decided 2026-11-24: 1 noUSD = 1 stable at par (oracle is only a depeg breaker); `claim()` pays in
+stables pro-rata; protocol fee is a parameter `protocolFeeBps` capped at 10 % in code, 0 at launch,
+taken on `sync()` into a treasury accrual; a recenter path is needed.
+
+1. **Par arbitrage inside the depeg threshold.** With par valuation, `min(oracle, 1)` is out, so the
+   remaining tools are a mint/burn fee and a tighter breaker threshold.
+2. **Accrual to addresses that will never claim** (DEX pools, bridges, other contracts). Proposal:
+   EOAs accrue by default, contracts are excluded unless they opt in themselves (no governed list).
+3. **Recenter.** Proposal: permissionless `recenter(pos)` with no free parameters — out of range for
+   N hours, both stables at peg by oracle, new range = registry preset around the current price,
+   no swap (leftover waits for mint or `compound()`), cooldown. Under depeg: no recenter, the position
+   is dropped from pool selection.
+4. **First deposit:** dead shares at deployment (ERC-4626 inflation lesson), rounding against the user
    everywhere (Bunni lesson).
-6. **Valuation:** token amounts priced by oracle, not spot (Gamma lesson), each stable at `min(oracle, 1)`.
+5. **Governance and upgradeability:** multisig + timelock for the registry and the fee; proxy or
+   immutable.
+6. **Which L2, which stables and pools at launch; keeper operator.**
 
 ## Prior art (short)
 
