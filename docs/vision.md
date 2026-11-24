@@ -209,6 +209,7 @@ Limit values are a starting proposal, to be fitted on real pool data.
 | 2026-11-23 | Main chain is an L2; Ethereum mainnet is secondary. Keeper `sync()` hourly on L2, daily on Ethereum; per-chain `compound()` threshold; sequencer-uptime check on L2. |
 | 2026-11-24 | 1 noUSD = 1 stable at par, not 1 USD; oracle only as a depeg breaker. `claim()` pays in stables. Protocol fee parameter up to 10 %, 0 at launch. Recenter path required (design open). |
 | 2026-11-24 | Not upgradeable, all parameters capped in code. Burn delay parameter (0 at launch). Blast-style accrual (contracts opt in, 7702 EOAs accrue). Recenter accepted. No first-deposit protection (attack does not apply). Chains: Unichain, Arbitrum. |
+| 2026-11-24 | Governance confirmed (2-of-3 multisig, 48 h timelock for loosening). Proposed numbers, launch set (Arbitrum main, Unichain demo until a USDT0 oracle) and keeper calls. |
 | 2026-11-23 | Compared with Uniswap v2 LP tokens (share of reserves, price grows, no accounting needed). Open: is "noUSD ≈ $1" mandatory, or is a v2-style appreciating share acceptable? |
 
 ## Why the accumulator — simulation
@@ -252,15 +253,51 @@ Decided 2026-11-24:
   arrives through `sync()` as fees). Rounding against the user stays a code rule.
 - **Chains:** Unichain and Arbitrum are the main deployments; Ethereum mainnet is secondary.
 
-Still open:
-1. **Par arbitrage inside the depeg threshold.** The burn delay removes the atomic round trip but
-   not the trade itself; `mintFeeBps` and the breaker threshold are the other levers.
-2. **Who sets the parameters:** carried over from 2026-11-18 — 2-of-3 multisig, tightening
-   immediately, loosening through a 48–72 h timelock. To confirm.
-3. **Numbers:** N hours and cooldown for recenter, caps for burn delay and `mintFeeBps`, breaker
-   threshold, keeper interval per chain.
-4. **Launch set:** which stables and pools on Unichain and Arbitrum, sequencer-uptime feeds there,
-   who runs the keeper.
+Governance (confirmed 2026-11-24): 2-of-3 multisig sets parameters within the code caps;
+tightening is immediate, loosening goes through a 48 h timelock.
+
+## Proposal 2026-11-24: numbers, launch set, keeper (to approve)
+
+| Parameter | Cap in code | Launch | Why |
+|---|---|---|---|
+| burn delay | 7 days | 0 | Ethena cooldown / Lido worst case; longer = DEX discount |
+| `mintFeeBps` | 50 bps | 0 | equals the depeg threshold, so it can absorb par arbitrage inside it |
+| `protocolFeeBps` | 10 % | 0 | decided |
+| depeg breaker (stop mint with that stable) | 1–200 bps | 50 bps | stable feeds step 0.1–0.3 % |
+| oracle max age | per feed | heartbeat + 20 % | Arbitrum USDC/USDT feeds: 255 s heartbeat; SVR and Unichain: 24 h |
+| sequencer grace | ≤ 24 h | 1 h | Chainlink practice |
+| spot vs oracle on mint | ≤ 200 bps | Arbitrum 45, Unichain 185 bps | values already tuned for our LP managers |
+| recenter: out of range for | 1 h – 7 d | 6 h | |
+| recenter: cooldown per position | ≥ 1 h | 24 h | |
+| share of one pool | ≤ 50 % | 30 % | decided 2026-11-21 |
+| positions | 8 | — | gas of sync and burn |
+| `compound()` threshold | per chain | $5 on L2, $500 on Ethereum | gas ≤ 1 % of what is reinvested |
+
+**Launch set (data.v2 + GeckoTerminal, 2026-11-24).** Hookless v4 stable/stable pools above $100k TVL:
+- Arbitrum USDC/USDT0, fee 0.0008 % (+0.0002 % Uniswap protocol fee): TVL $543k, 7d volume ~$80M,
+  APR 5.3 %. At a 30 % share our cap is ~$230k, and our entry lowers the pool APR to ~3.7 %.
+- Unichain USDC/USDT0, fee 0.01 %: TVL $151k, 7d volume ~$0.4M, APR 1.3 %.
+
+Unichain has no Chainlink USDT/USD feed (only USDC/USD), so a USDT0 depeg is invisible there.
+Proposal: the oracle is a per-token adapter in the registry, pluggable later without redeploying;
+a token without an adapter cannot be minted with, burn still works. Check Pyth / RedStone for USDT0
+on Unichain; until then Unichain is a demo deployment and Arbitrum is the main one.
+
+**Keeper.** No privileges — every call is permissionless and the contract checks the conditions.
+Our service is primary; Gelato or Chainlink Automation is the backup where available.
+
+| Call | When | If the keeper is gone |
+|---|---|---|
+| `sync()` | hourly on L2, daily on Ethereum; once a day also records `feeGrowthGlobal` points for the 7-day yield in pool selection | transfer error grows; mint and burn still sync |
+| `compound(pos)` | uncollected fees above threshold | fees idle but not lost; burn compounds |
+| `executeBurns(n)` | only if burn delay > 0 | holders execute their own requests |
+| `recenter(pos)` | out of range ≥ 6 h, both stables at peg | position idle; mint skips it |
+| `reclassify(addr)` | an address that accrued now has real (non-7702) code | accrual stuck, not lost |
+
+It also alerts (no transactions): breaker on or stale feed, sequencer down, position out of range,
+pool share above cap, noUSD on DEX more than 0.3 % from 1, burn queue growing, keeper low on gas.
+
+Still open: approve the numbers and the launch set; oracle source for USDT0 on Unichain.
 
 ## Prior art (short)
 
