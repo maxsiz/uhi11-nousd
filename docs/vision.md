@@ -208,6 +208,7 @@ Limit values are a starting proposal, to be fitted on real pool data.
 | 2026-11-23 | noUSD is a separate ERC-20. Fee accounting variant L: transfers checkpoint both sides, only `sync()` moves the counter (on mint, burn, and a keeper at least daily). `compound()` is a separate, threshold-driven operation. Variant E (exact, transfer reads the pools) rejected on gas. |
 | 2026-11-23 | Main chain is an L2; Ethereum mainnet is secondary. Keeper `sync()` hourly on L2, daily on Ethereum; per-chain `compound()` threshold; sequencer-uptime check on L2. |
 | 2026-11-24 | 1 noUSD = 1 stable at par, not 1 USD; oracle only as a depeg breaker. `claim()` pays in stables. Protocol fee parameter up to 10 %, 0 at launch. Recenter path required (design open). |
+| 2026-11-24 | Not upgradeable, all parameters capped in code. Burn delay parameter (0 at launch). Blast-style accrual (contracts opt in, 7702 EOAs accrue). Recenter accepted. No first-deposit protection (attack does not apply). Chains: Unichain, Arbitrum. |
 | 2026-11-23 | Compared with Uniswap v2 LP tokens (share of reserves, price grows, no accounting needed). Open: is "noUSD ≈ $1" mandatory, or is a v2-style appreciating share acceptable? |
 
 ## Why the accumulator — simulation
@@ -228,23 +229,38 @@ that is why it was chosen. Full results: [`simulation/sim2.json`](simulation/sim
 
 ## Open questions
 
-Decided 2026-11-24: 1 noUSD = 1 stable at par (oracle is only a depeg breaker); `claim()` pays in
-stables pro-rata; protocol fee is a parameter `protocolFeeBps` capped at 10 % in code, 0 at launch,
-taken on `sync()` into a treasury accrual; a recenter path is needed.
+Decided 2026-11-24:
+- 1 noUSD = 1 stable at par (oracle is only a depeg breaker); `claim()` pays in stables pro-rata.
+- Protocol fee: `protocolFeeBps`, capped at 10 % in code, 0 at launch, taken on `sync()` into a
+  treasury accrual.
+- **Contracts are not upgradeable.** Every parameter is provisioned now with a hard cap in code
+  (`protocolFeeBps`, `mintFeeBps`, burn delay, recenter timing); a bug fix is a new deployment and
+  holders migrate via burn → mint. Burn can never be blocked, only delayed within its cap.
+- **Burn delay** is a parameter, 0 at launch. With T > 0: `requestBurn(x)` escrows noUSD (it stops
+  accruing), anyone executes after T, and the share is computed at execution — otherwise a request
+  is a free option against a depeg. `claim()` is never delayed.
+- **Accrual, Blast-style:** EOAs accrue by default, contracts are excluded unless they opt in
+  themselves; no governed list. An EIP-7702-delegated EOA (code `0xef0100…`) counts as an EOA.
+  A public `reclassify(addr)` excludes an address that later got real code; what it already
+  accrued stays claimable.
+- **Recenter:** permissionless `recenter(pos)` with no free parameters — out of range for N hours,
+  both stables at peg by oracle, new range = registry preset around the current price, no swap
+  (leftover waits for mint or `compound()`), cooldown. Under depeg: no recenter, the position is
+  dropped from pool selection.
+- **No first-deposit protection:** the inflation attack does not apply — noUSD is minted for value
+  added, not at a share price, and nobody can donate into the vault's positions (a pool `donate`
+  arrives through `sync()` as fees). Rounding against the user stays a code rule.
+- **Chains:** Unichain and Arbitrum are the main deployments; Ethereum mainnet is secondary.
 
-1. **Par arbitrage inside the depeg threshold.** With par valuation, `min(oracle, 1)` is out, so the
-   remaining tools are a mint/burn fee and a tighter breaker threshold.
-2. **Accrual to addresses that will never claim** (DEX pools, bridges, other contracts). Proposal:
-   EOAs accrue by default, contracts are excluded unless they opt in themselves (no governed list).
-3. **Recenter.** Proposal: permissionless `recenter(pos)` with no free parameters — out of range for
-   N hours, both stables at peg by oracle, new range = registry preset around the current price,
-   no swap (leftover waits for mint or `compound()`), cooldown. Under depeg: no recenter, the position
-   is dropped from pool selection.
-4. **First deposit:** dead shares at deployment (ERC-4626 inflation lesson), rounding against the user
-   everywhere (Bunni lesson).
-5. **Governance and upgradeability:** multisig + timelock for the registry and the fee; proxy or
-   immutable.
-6. **Which L2, which stables and pools at launch; keeper operator.**
+Still open:
+1. **Par arbitrage inside the depeg threshold.** The burn delay removes the atomic round trip but
+   not the trade itself; `mintFeeBps` and the breaker threshold are the other levers.
+2. **Who sets the parameters:** carried over from 2026-11-18 — 2-of-3 multisig, tightening
+   immediately, loosening through a 48–72 h timelock. To confirm.
+3. **Numbers:** N hours and cooldown for recenter, caps for burn delay and `mintFeeBps`, breaker
+   threshold, keeper interval per chain.
+4. **Launch set:** which stables and pools on Unichain and Arbitrum, sequencer-uptime feeds there,
+   who runs the keeper.
 
 ## Prior art (short)
 
