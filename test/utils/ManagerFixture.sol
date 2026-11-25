@@ -49,6 +49,28 @@ contract StableToken is ERC20 {
     }
 }
 
+/// @dev unisafe-style price guard with a scripted answer: vouch, no opinion, or revert.
+contract MockOracle {
+    enum Mode {
+        Vouch,
+        NoOpinion,
+        Revert
+    }
+
+    Mode public mode;
+
+    error SpotPriceOutOfBounds();
+
+    function setMode(Mode m) external {
+        mode = m;
+    }
+
+    function check(PoolKey calldata, bool, uint256, uint256) external view returns (bool) {
+        if (mode == Mode.Revert) revert SpotPriceOutOfBounds();
+        return mode == Mode.Vouch;
+    }
+}
+
 /// @dev Test-only entry that creates positions through the same internal add path mint will use, and
 /// mints noUSD for the value added at par.
 contract ManagerHarness is NoUSDPositionManager {
@@ -60,6 +82,19 @@ contract ManagerHarness is NoUSDPositionManager {
         value = _liquidityValue(id, registry.pool(id).key, positions[id], liquidity);
         token.mint(holder, value);
     }
+
+    /// @dev Books tokens already sent to the manager as idle (a stand-in for retire/compound leftovers).
+    function fundIdle(Currency c, uint256 amount) external {
+        _noteCurrency(c);
+        idle[c] += amount;
+    }
+
+    function _addForTest(bytes memory data) internal override returns (bytes memory) {
+        (PoolId id, uint128 liquidity) = abi.decode(data, (PoolId, uint128));
+        NoUSDRegistry.PoolConfig memory cfg = registry.pool(id);
+        _modify(cfg.key, _ensurePosition(id, cfg), int256(uint256(liquidity)));
+        return "";
+    }
 }
 
 /// @notice Real PoolManager, two hookless pools at par sharing one currency (A18/B6 and B6/C18), outside
@@ -69,6 +104,8 @@ abstract contract ManagerFixture is Test {
     using StateLibrary for IPoolManager;
 
     IPoolManager internal pm;
+    MockOracle internal oracle;
+    mapping(PoolId => uint160) internal creditPrice;
     PoolSwapTest internal swapRouter;
     PoolModifyLiquidityTest internal lpRouter;
     NoUSDRegistry internal reg;
@@ -95,7 +132,8 @@ abstract contract ManagerFixture is Test {
         tC = new StableToken("C", 18);
 
         reg = new NoUSDRegistry(address(this));
-        reg.setOracle(makeAddr("oracle"));
+        oracle = new MockOracle();
+        reg.setOracle(address(oracle));
         reg.setTreasury(treasury);
         reg.setSupplyCap(type(uint128).max);
         reg.admitToken(_c(tA), true);
@@ -148,20 +186,22 @@ abstract contract ManagerFixture is Test {
         t1.approve(spender, type(uint256).max);
     }
 
-    /// @dev Initialize at par and add wide outside liquidity (≈ 1M of each token).
+    /// @dev Initialize at par and add outside liquidity of ≈ 2M of each token within ±2 % of par, like the
+    /// concentrated depth of a live stable pool.
     function _initPool(PoolKey memory key) internal {
         int24 par = reg.parTick(key);
         pm.initialize(key, TickMath.getSqrtPriceAtTick(par));
         _mintAndApprove(key, address(lpRouter), 10_000_000);
         _mintAndApprove(key, address(swapRouter), 10_000_000);
-        uint128 l = _liquidityForValue(key, 2_000_000, par - 2_000, par + 2_000);
+        uint128 l = _liquidityForValue(key, 2_000_000, par - 200, par + 200);
         lpRouter.modifyLiquidity(
             key,
             ModifyLiquidityParams({
-                tickLower: par - 2_000, tickUpper: par + 2_000, liquidityDelta: int256(uint256(l)), salt: 0
+                tickLower: par - 200, tickUpper: par + 200, liquidityDelta: int256(uint256(l)), salt: 0
             }),
             ""
         );
+        creditPrice[key.toId()] = TickMath.getSqrtPriceAtTick(par);
     }
 
     /// @dev Liquidity of a range at the current price worth about `units` of each side.
@@ -219,13 +259,23 @@ abstract contract ManagerFixture is Test {
         return _bodyValueAt(false);
     }
 
-    /// @dev Same, with positions valued at the par price instead of the current one: removes the
-    /// composition drift of price moves inside the range, so the invariant must hold exactly.
-    function _bodyValueAtPar() internal view returns (uint256 v) {
+    /// @dev Same, with each position valued at the pool price of the last credit (seed or mint) instead of
+    /// the current one. Liabilities were credited at that price, so no-value-created must hold exactly;
+    /// any other price adds the composition drift of spec §6. (Valuing at par would be wrong: at a fixed
+    /// valuation price an LP position is worth least when the pool sits exactly at that price.)
+    function _bodyValueAtCredit() internal view returns (uint256 v) {
         return _bodyValueAt(true);
     }
 
-    function _bodyValueAt(bool atPar) internal view returns (uint256 v) {
+    /// @dev Records the current pool prices as the credit prices (call after a mint).
+    function _markCredit() internal {
+        (uint160 a,,,) = pm.getSlot0(idAB);
+        (uint160 b,,,) = pm.getSlot0(idBC);
+        creditPrice[idAB] = a;
+        creditPrice[idBC] = b;
+    }
+
+    function _bodyValueAt(bool atCredit) internal view returns (uint256 v) {
         PoolKey[2] memory keys = [keyAB, keyBC];
         for (uint256 i; i < 2; ++i) {
             PoolId id = keys[i].toId();
@@ -233,7 +283,7 @@ abstract contract ManagerFixture is Test {
             if (lo == hi) continue;
             (uint128 l, uint256 last0, uint256 last1) = pm.getPositionInfo(id, address(mgr), lo, hi, bytes32(0));
             (uint160 sp,,,) = pm.getSlot0(id);
-            if (atPar) sp = TickMath.getSqrtPriceAtTick(reg.parTick(keys[i]));
+            if (atCredit) sp = creditPrice[id];
             (uint256 a0, uint256 a1) = AmountsMath.getAmountsForLiquidity(
                 sp, TickMath.getSqrtPriceAtTick(lo), TickMath.getSqrtPriceAtTick(hi), l
             );
@@ -248,6 +298,33 @@ abstract contract ManagerFixture is Test {
         for (uint256 i; i < 3; ++i) {
             v += mgr.idle(_c(ts[i])) * reg.scale(_c(ts[i]));
         }
+    }
+
+    /// @dev Queue, wait out the timelock and execute a registry call (the test contract owns the registry).
+    function _timelocked(bytes memory data) internal {
+        reg.queue(data);
+        skip(48 hours);
+        reg.execute(data);
+    }
+
+    /// @dev Mint `units` whole tokens of `t` for `who` (funds and approves first).
+    function _mint(StableToken t, uint256 units, address who) internal returns (uint256 out) {
+        uint256 amount = units * 10 ** t.decimals();
+        t.mint(who, amount);
+        vm.startPrank(who);
+        t.approve(address(mgr), amount);
+        out = mgr.mint(_c(t), amount, 0, who, type(uint256).max);
+        vm.stopPrank();
+        _markCredit();
+    }
+
+    /// @dev Rounding dust allowed when liquidity is (re)added: v4 charges rounded-up amounts, the body is
+    /// measured rounded down, and one unit of liquidity can be worth ~1e9 wei of an 18-decimal token next
+    /// to a 6-decimal one. 1e13 is 1e-5 of a cent.
+    uint256 internal constant DUST = 1e13;
+
+    function _assertSolvent() internal view {
+        assertGe(_bodyValueAtCredit() + DUST, _liabilities(), "body covers liabilities at the credit price");
     }
 
     function _liabilities() internal view returns (uint256) {

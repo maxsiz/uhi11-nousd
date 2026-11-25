@@ -9,6 +9,7 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {FixedPoint128} from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
+import {Obs} from "../src/lib/ManagerTypes.sol";
 import {ManagerFixture} from "./utils/ManagerFixture.sol";
 
 /// @notice Manager part 1 against a real PoolManager: sync, burn, claim, treasury, retire (spec §9).
@@ -41,7 +42,7 @@ contract NoUSDPositionManagerTest is ManagerFixture {
         assertApproxEqAbs(earned, token.totalUnclaimed(), 2);
         // Swaps left the price slightly off par; valued at the par price the body covers every liability
         // exactly (the drift of spec §6 is only the price move inside the range).
-        assertGe(_bodyValueAtPar(), _liabilities(), "solvent at par");
+        _assertSolvent();
     }
 
     /// @dev The fees sync counts are exactly what v4 owes the position (same formula, same rounding).
@@ -84,7 +85,7 @@ contract NoUSDPositionManagerTest is ManagerFixture {
 
     function test_sync_rotatesObs() public {
         _sync();
-        (NoUSDPositionManager.Obs memory older, NoUSDPositionManager.Obs memory newer) = mgr.obs(idAB);
+        (Obs memory older, Obs memory newer) = mgr.obs(idAB);
         assertEq(older.t, 0);
         assertEq(newer.t, block.timestamp);
         skip(7 days - 1);
@@ -191,7 +192,7 @@ contract NoUSDPositionManagerTest is ManagerFixture {
         assertApproxEqRel(paid, accrued, 0.001e18);
         assertEq(token.totalSupply(), v);
         assertEq(token.balanceOf(alice), v);
-        assertGe(_bodyValueAtPar(), _liabilities(), "solvent at par");
+        _assertSolvent();
         vm.prank(alice);
         assertEq(mgr.claim(alice, 0, DEADLINE), 0);
     }
