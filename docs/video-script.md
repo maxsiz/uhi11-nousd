@@ -48,8 +48,8 @@ minimum received, price guard, supply cap. Mint → success screen.
 **Say:** "The preview shows exactly what the unlock will do. Pairing with idle means there's often no swap
 at all."
 
-**Show:** Prototype states → Mint outcome "Off par". Point at the notice and the disabled CTA. Then
-"Slippage".
+**Show:** Prototype states → Mint outcome "USDT off par", pick USDT in the token list. Point at the
+"Off par" tag, the notice and the disabled CTA. Then "Slippage".
 
 **Say:** "If a stable depegs, minting with it closes. Exits never close."
 
