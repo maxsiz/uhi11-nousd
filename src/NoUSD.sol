@@ -31,7 +31,9 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
     /// @notice The only address allowed to mint, burn, distribute and consume accrued.
     address public immutable manager;
 
-    mapping(address => Account) internal _accounts;
+    /// @dev Packed Account words: balance (bits 0-127) | checkpoint (128-247) | flags (248-255). Read and
+    /// written as one word through _load/_store; a struct assignment would write each field separately.
+    mapping(address => uint256) internal _accounts;
     /// @notice Settled but unpaid earnings per holder, value at par (18 decimals). Never returns to 0
     /// once written: `consumeAccrued` leaves 1 wei so the slot stays warm-priced.
     mapping(address => uint256) public accrued;
@@ -80,7 +82,7 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
     }
 
     function balanceOf(address account) external view returns (uint256) {
-        return _accounts[account].balance;
+        return _load(account).balance;
     }
 
     function transfer(address to, uint256 value) external returns (bool) {
@@ -109,7 +111,7 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
         uint256 newBalance = uint256(a.balance) + amount;
         if (newBalance > type(uint128).max) revert BalanceOverflow();
         a.balance = uint128(newBalance);
-        _accounts[to] = a;
+        _store(to, a);
         totalSupply += amount;
         if (a.flags & EXCLUDED != 0) excludedSupply += amount;
         emit Transfer(address(0), to, amount);
@@ -118,14 +120,14 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
     /// @notice Burns `amount` from `from` after settling it. The manager authorizes the holder itself.
     function burnFrom(address from, uint256 amount) external onlyManager {
         uint256 acc = accPerShare;
-        Account memory a = _settled(from, _accounts[from], acc);
+        Account memory a = _settled(from, _load(from), acc);
         if (a.balance < amount) revert ERC20InsufficientBalance(from, a.balance, amount);
         unchecked {
             a.balance -= uint128(amount);
             totalSupply -= amount;
             if (a.flags & EXCLUDED != 0) excludedSupply -= amount;
         }
-        _accounts[from] = a;
+        _store(from, a);
         emit Transfer(from, address(0), amount);
     }
 
@@ -154,9 +156,9 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
 
     /// @notice Settles `a` and takes all but 1 wei of its accrued earnings.
     function consumeAccrued(address a) external onlyManager returns (uint256 paid) {
-        Account memory acct = _accounts[a];
+        Account memory acct = _load(a);
         uint256 acc = accPerShare;
-        if (acct.checkpoint != acc) _accounts[a] = _settled(a, acct, acc);
+        if (acct.checkpoint != acc) _store(a, _settled(a, acct, acc));
         uint256 amount = accrued[a];
         if (amount <= 1) return 0;
         unchecked {
@@ -188,7 +190,7 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
     /// @notice Re-applies the default classification of `a` from its current code. No-op for addresses
     /// that chose their mode with `configureAccrual`. Anyone may call.
     function reclassify(address a) external {
-        uint8 flags = _accounts[a].flags;
+        uint8 flags = _load(a).flags;
         if (flags & MANUAL != 0) return;
         _setMode(a, _isContract(a), 0);
     }
@@ -197,7 +199,7 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
 
     /// @notice Accrued plus not yet settled earnings of `a`.
     function pendingAccrued(address a) external view returns (uint256) {
-        Account memory acct = _accounts[a];
+        Account memory acct = _load(a);
         uint256 earned;
         if (acct.flags & EXCLUDED == 0) {
             earned = uint256(acct.balance) * (accPerShare - acct.checkpoint) / ACC_SCALE;
@@ -206,7 +208,7 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
     }
 
     function isExcluded(address a) external view returns (bool) {
-        return _accounts[a].flags & EXCLUDED != 0;
+        return _load(a).flags & EXCLUDED != 0;
     }
 
     /// @notice Supply that takes part in distributions.
@@ -220,10 +222,10 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
         if (from == address(0)) revert ERC20InvalidSender(address(0));
         if (to == address(0)) revert ERC20InvalidReceiver(address(0));
         uint256 acc = accPerShare;
-        Account memory f = _settled(from, _accounts[from], acc);
+        Account memory f = _settled(from, _load(from), acc);
         if (f.balance < value) revert ERC20InsufficientBalance(from, f.balance, value);
         if (from == to) {
-            _accounts[from] = f;
+            _store(from, f);
             emit Transfer(from, to, value);
             return;
         }
@@ -238,14 +240,14 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
             if (fromExcluded) excludedSupply -= value;
             else excludedSupply += value;
         }
-        _accounts[from] = f;
-        _accounts[to] = t;
+        _store(from, f);
+        _store(to, t);
         emit Transfer(from, to, value);
     }
 
     /// @dev Loads, classifies on first receipt, and settles a receiving account.
     function _receiving(address to, uint256 acc) internal returns (Account memory a) {
-        a = _accounts[to];
+        a = _load(to);
         if (a.flags & CLASSIFIED == 0) {
             // First receipt: the balance is 0, so excludedSupply is unaffected.
             a.flags |= CLASSIFIED;
@@ -275,7 +277,7 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
     /// @dev Settles `who` and switches it to `excluded`, keeping excludedSupply in sync; `extraFlags` is
     /// OR-ed in (MANUAL for a holder's own choice).
     function _setMode(address who, bool excluded, uint8 extraFlags) internal {
-        Account memory a = _settled(who, _accounts[who], accPerShare);
+        Account memory a = _settled(who, _load(who), accPerShare);
         bool was = a.flags & EXCLUDED != 0;
         a.flags |= CLASSIFIED | extraFlags;
         if (was != excluded) {
@@ -288,7 +290,18 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors {
             }
             emit AccrualModeChanged(who, excluded);
         }
-        _accounts[who] = a;
+        _store(who, a);
+    }
+
+    function _load(address who) internal view returns (Account memory a) {
+        uint256 w = _accounts[who];
+        a.balance = uint128(w);
+        a.checkpoint = uint120(w >> 128);
+        a.flags = uint8(w >> 248);
+    }
+
+    function _store(address who, Account memory a) internal {
+        _accounts[who] = uint256(a.balance) | (uint256(a.checkpoint) << 128) | (uint256(a.flags) << 248);
     }
 
     /// @dev True for an address with real code. An EIP-7702 delegation designator (23 bytes starting with
