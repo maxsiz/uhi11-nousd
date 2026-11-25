@@ -1,4 +1,19 @@
 {
   "poolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
-  "oracle": "0xa5A1fF40a1F89F26Db124DC56ad6fD8aBb378f29"
+  "oracle": "0xa5A1fF40a1F89F26Db124DC56ad6fD8aBb378f29",
+  "supplyCap": "100000000000000000000000",
+  "compoundThreshold": "500000000000000000000",
+  "tokens": [
+    { "mintable": true, "token": "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3" },
+    { "mintable": true, "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" },
+    { "mintable": true, "token": "0x6B175474E89094C44Da98b954EedeAC495271d0F" },
+    { "mintable": true, "token": "0xdAC17F958D2ee523a2206206994597C13D831ec7" },
+    { "mintable": false, "token": "0xdC035D45d973E3EC169d2276DDab16f1e407384F" },
+    { "mintable": false, "token": "0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD" }
+  ],
+  "pools": [
+    { "currencyA": "0x4c9EDD5852cd905f086C759E8383e09bff1E68B3", "currencyB": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "fee": 25, "halfWidthTicks": 100, "status": 1, "tickSpacing": 1, "weight": 1 },
+    { "currencyA": "0x6B175474E89094C44Da98b954EedeAC495271d0F", "currencyB": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "fee": 68, "halfWidthTicks": 100, "status": 1, "tickSpacing": 1, "weight": 1 },
+    { "currencyA": "0xdC035D45d973E3EC169d2276DDab16f1e407384F", "currencyB": "0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD", "fee": 5, "halfWidthTicks": 100, "status": 2, "tickSpacing": 1, "weight": 1 }
+  ]
 }
