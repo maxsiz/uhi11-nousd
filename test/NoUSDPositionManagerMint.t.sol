@@ -43,21 +43,23 @@ contract NoUSDPositionManagerMintTest is ManagerFixture {
     }
 
     function test_mint_pairsWithIdle_noSwap() public {
-        // 10 000 B of idle (holders' money) waiting in the manager.
-        tB.mint(address(mgr), 10_000e6);
-        mgr.fundIdle(_c(tB), 10_000e6);
+        // ≈ 10 000 B of idle (holders' money): a retired pool's liquidity waiting in the manager.
+        _seed(keyBC, 10_000, bob);
+        reg.retirePool(idBC);
+        uint256 idleB = mgr.idle(_c(tB));
+        assertApproxEqRel(idleB, 10_000e6, 0.001e18);
         vm.recordLogs();
         uint256 out = _mint(tA, 4_000, alice);
         _assertNoSwap();
         // The minter is credited for her own A only; about 4 000 B of idle went into the position with it.
         assertApproxEqRel(out, 4_000e18, 0.00001e18);
-        assertApproxEqRel(mgr.idle(_c(tB)), 6_000e6, 0.001e18);
+        assertApproxEqRel(mgr.idle(_c(tB)), idleB - 4_000e6, 0.001e18);
         _assertSolvent();
     }
 
     function test_mint_partialIdle_swapsTheRest() public {
-        tB.mint(address(mgr), 1_000e6);
-        mgr.fundIdle(_c(tB), 1_000e6);
+        _seed(keyBC, 1_000, bob);
+        reg.retirePool(idBC);
         uint256 out = _mint(tA, 10_000, alice);
         assertEq(mgr.idle(_c(tB)), 0, "idle used up");
         assertGe(out, 9_990e18);
@@ -180,6 +182,35 @@ contract NoUSDPositionManagerMintTest is ManagerFixture {
         _assertSolvent();
     }
 
+    /// @dev Regression: the first add into a pool that already earned fees (any live pool) must not count
+    /// the pool's history. v4 initializes our range's ticks in that add, which shifts feeGrowthInside.
+    function test_mint_firstIntoPoolWithFeeHistory_noPhantomFees() public {
+        _churn(keyAB, 50_000, 5);
+        _mint(tA, 1_000, alice);
+        mgr.sync();
+        assertEq(token.totalUnclaimed() + mgr.carry(), 0);
+        _churn(keyAB, 50_000, 1);
+        mgr.sync();
+        assertGt(token.totalUnclaimed(), 0, "fees after entry are counted");
+        assertLt(token.totalUnclaimed(), 1e18, "and only those");
+        _assertSolvent();
+    }
+
+    /// @dev Regression: a position emptied by retire must not count, on its next add, the fees the pool
+    /// earned while it held nothing.
+    function test_mint_intoReactivatedPool_noPhantomFees() public {
+        _seed(keyAB, 10_000, alice);
+        reg.retirePool(idAB);
+        _timelocked(abi.encodeCall(NoUSDRegistry.setPoolStatus, (idAB, NoUSDRegistry.PoolStatus.Active)));
+        _churn(keyAB, 50_000, 5); // fees accrue in the pool while our position is empty
+        mgr.sync();
+        uint256 before = token.totalUnclaimed() + mgr.carry();
+        _mint(tA, 1_000, bob);
+        mgr.sync();
+        assertLe(token.totalUnclaimed() + mgr.carry() - before, 1e12, "no fees from the empty period");
+        _assertSolvent();
+    }
+
     // ───────────── compound ─────────────
 
     function test_compound_reinvestsFeesAndIdle() public {
@@ -221,7 +252,7 @@ contract NoUSDPositionManagerMintTest is ManagerFixture {
         _timelocked(abi.encodeCall(NoUSDRegistry.setPoolRange, (idAB, par - 200, par + 200)));
         uint256 liabBefore = _liabilities();
         mgr.applyRange(idAB);
-        (int24 lo, int24 hi,,) = mgr.positions(idAB);
+        (int24 lo, int24 hi,,,,,,,,) = mgr.positions(idAB);
         assertEq(lo, par - 200);
         assertEq(hi, par + 200);
         assertGt(mgr.positionLiquidity(idAB), 0);

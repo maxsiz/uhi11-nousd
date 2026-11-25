@@ -49,7 +49,7 @@ contract NoUSDPositionManagerTest is ManagerFixture {
     function test_sync_matchesFeesOwedByV4() public {
         _seed(keyAB, 10_000, alice);
         _churn(keyAB, 50_000, 5);
-        (int24 lo, int24 hi,,) = mgr.positions(idAB);
+        (int24 lo, int24 hi,,,,,,,,) = mgr.positions(idAB);
         (uint128 l, uint256 last0, uint256 last1) = pm.getPositionInfo(idAB, address(mgr), lo, hi, bytes32(0));
         (uint256 g0, uint256 g1) = pm.getFeeGrowthInside(idAB, lo, hi);
         uint256 owed;

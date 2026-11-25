@@ -3,6 +3,8 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {TransientStateLibrary} from "@uniswap/v4-core/src/libraries/TransientStateLibrary.sol";
 import {PoolManager} from "@uniswap/v4-core/src/PoolManager.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
@@ -12,7 +14,7 @@ import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {FixedPoint128} from "@uniswap/v4-core/src/libraries/FixedPoint128.sol";
 import {PoolSwapTest} from "@uniswap/v4-core/src/test/PoolSwapTest.sol";
 import {PoolModifyLiquidityTest} from "@uniswap/v4-core/src/test/PoolModifyLiquidityTest.sol";
-import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "@uniswap/v4-core/src/types/Currency.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
@@ -21,6 +23,7 @@ import {LiquidityAmounts as AmountsMath} from "@uniswap/v4-core/test/utils/Liqui
 import {NoUSD} from "../../src/NoUSD.sol";
 import {NoUSDRegistry} from "../../src/NoUSDRegistry.sol";
 import {NoUSDPositionManager} from "../../src/NoUSDPositionManager.sol";
+import {Position} from "../../src/lib/ManagerTypes.sol";
 
 /// @dev Stablecoin mock with configurable decimals and a USDT/USDC-style blacklist.
 contract StableToken is ERC20 {
@@ -74,26 +77,38 @@ contract MockOracle {
 /// @dev Test-only entry that creates positions through the same internal add path mint will use, and
 /// mints noUSD for the value added at par.
 contract ManagerHarness is NoUSDPositionManager {
+    using TransientStateLibrary for IPoolManager;
+    using CurrencyLibrary for Currency;
+
     constructor(NoUSD t, NoUSDRegistry r, IPoolManager pm) NoUSDPositionManager(t, r, pm) {}
 
+    /// @dev Adds `liquidity` paid from the harness's own token balance and mints noUSD for its value.
     function seed(PoolId id, uint128 liquidity, address holder) external returns (uint256 value) {
-        _sync();
+        _syncNow();
         poolManager.unlock(abi.encode(Action.Add, abi.encode(id, liquidity)));
-        value = _liquidityValue(id, registry.pool(id).key, positions[id], liquidity);
+        value = _liquidityValue(id, positions[id], liquidity);
         token.mint(holder, value);
-    }
-
-    /// @dev Books tokens already sent to the manager as idle (a stand-in for retire/compound leftovers).
-    function fundIdle(Currency c, uint256 amount) external {
-        _noteCurrency(c);
-        idle[c] += amount;
     }
 
     function _addForTest(bytes memory data) internal override returns (bytes memory) {
         (PoolId id, uint128 liquidity) = abi.decode(data, (PoolId, uint128));
-        NoUSDRegistry.PoolConfig memory cfg = registry.pool(id);
-        _modify(cfg.key, _ensurePosition(id, cfg), int256(uint256(liquidity)));
+        Position storage pos = _ensurePosition(id, _cfg(id));
+        _add(id, pos, liquidity);
+        _payFromBalance(pos.currency0);
+        _payFromBalance(pos.currency1);
         return "";
+    }
+
+    /// @dev Settles a debt from the harness's token balance; a credit becomes idle.
+    function _payFromBalance(Currency c) internal {
+        int256 d = poolManager.currencyDelta(address(this), c);
+        if (d < 0) {
+            poolManager.sync(c);
+            IERC20(Currency.unwrap(c)).transfer(address(poolManager), uint256(-d));
+            poolManager.settle();
+        } else {
+            _resolve(c, 0, address(0));
+        }
     }
 }
 
@@ -279,7 +294,7 @@ abstract contract ManagerFixture is Test {
         PoolKey[2] memory keys = [keyAB, keyBC];
         for (uint256 i; i < 2; ++i) {
             PoolId id = keys[i].toId();
-            (int24 lo, int24 hi,,) = mgr.positions(id);
+            (int24 lo, int24 hi,,,,,,,,) = mgr.positions(id);
             if (lo == hi) continue;
             (uint128 l, uint256 last0, uint256 last1) = pm.getPositionInfo(id, address(mgr), lo, hi, bytes32(0));
             (uint160 sp,,,) = pm.getSlot0(id);

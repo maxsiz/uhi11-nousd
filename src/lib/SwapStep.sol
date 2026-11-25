@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "@uniswap/v4-core/src/libraries/StateLibrary.sol";
 import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
@@ -15,11 +13,10 @@ import {PositionMath} from "./PositionMath.sol";
 
 /// @title SwapStep
 /// @notice The swap of a mint (spec §9.1 step 5b): swap the part of the deposit the position's ratio still
-/// lacks, exact input, never past the depeg price limit, and settle both currencies with the PoolManager.
-/// External library called inside the manager's unlock callback: through delegatecall the PoolManager sees
-/// the manager as the caller and the tokens move from the manager's balance.
+/// lacks, exact input, never past the depeg price limit. External library called inside the manager's unlock
+/// callback: through delegatecall the PoolManager sees the manager as the swapper; the resulting deltas are
+/// resolved by the manager at the end of the callback together with the add.
 library SwapStep {
-    using SafeERC20 for IERC20;
     using StateLibrary for IPoolManager;
     using PoolIdLibrary for PoolKey;
 
@@ -54,8 +51,6 @@ library SwapStep {
         BalanceDelta d = pm.swap(
             key, SwapParams({zeroForOne: zeroForOne, amountSpecified: -int256(s), sqrtPriceLimitX96: limit}), ""
         );
-        _settleOrTake(pm, key.currency0, d.amount0());
-        _settleOrTake(pm, key.currency1, d.amount1());
         (int128 dT, int128 dU) = zeroForOne ? (d.amount0(), d.amount1()) : (d.amount1(), d.amount0());
         paidT = uint128(-dT);
         gotU = uint128(dU);
@@ -64,15 +59,5 @@ library SwapStep {
     function _limit(Request memory q, bool zeroForOne) private pure returns (uint160) {
         int24 bound = int24(uint24(q.depegBps));
         return TickMath.getSqrtPriceAtTick(zeroForOne ? q.parTick - bound : q.parTick + bound);
-    }
-
-    function _settleOrTake(IPoolManager pm, Currency c, int128 amount) private {
-        if (amount > 0) {
-            pm.take(c, address(this), uint128(amount));
-        } else if (amount < 0) {
-            pm.sync(c);
-            IERC20(Currency.unwrap(c)).safeTransfer(address(pm), uint128(-amount));
-            pm.settle();
-        }
     }
 }
