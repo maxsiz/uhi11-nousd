@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  background-color: theme("colors.bg");
+  color: theme("colors.tx");
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a {
+  color: theme("colors.accent");
+}
+a:hover {
+  color: theme("colors.accent-hover");
+}
+input::placeholder {
+  color: theme("colors.tx3");
+}
+:focus-visible {
+  outline: 2px solid theme("colors.accent");
+  outline-offset: 2px;
+}
+::selection {
+  background: theme("colors.accent-soft");
+  color: #fff;
+}
+
+/* Every amount, address, ID, tick, bp and % is mono with tabular numerals. */
+.num {
+  font-family: theme("fontFamily.mono");
+  font-variant-numeric: tabular-nums;
+}
+
+@layer components {
+  .card {
+    @apply rounded-card border border-line bg-s1;
+  }
+  /* Uppercase labels: tx2, never tx3 (tx3 fails AA on s1). */
+  .label {
+    @apply text-[11.5px] font-semibold uppercase tracking-[.07em] text-tx2;
+  }
+  .eyebrow {
+    @apply text-[12px] font-bold tracking-[.12em] text-accent;
+  }
+  .h2 {
+    @apply font-display text-[26px] font-semibold tracking-[-.02em];
+  }
+
+  /* Buttons */
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-[12px] border-0 bg-accent font-bold text-ink shadow-cta transition hover:brightness-[1.08] disabled:cursor-not-allowed disabled:bg-s3 disabled:text-tx2 disabled:shadow-none disabled:hover:brightness-100;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-[12px] border border-line2 bg-s2 font-semibold text-tx transition hover:border-accent-line hover:text-accent;
+  }
+  .btn-warn {
+    @apply inline-flex items-center justify-center gap-2 rounded-[12px] border-0 bg-warn font-bold text-warn-ink;
+  }
+  .btn-max {
+    @apply rounded-[8px] border border-accent-line bg-accent-soft px-[9px] py-[5px] text-[12px] font-bold text-accent;
+  }
+  .popover {
+    @apply rounded-card border border-line2 shadow-pop;
+  }
+  .row {
+    @apply flex items-center justify-between gap-3 border-t border-line whitespace-nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-nu-pulse {
+    animation: none;
+  }
+}
