@@ -1,0 +1,141 @@
+name: Deploy web (prod)
+
+# Builds web/ as a Node standalone bundle on a GitHub-hosted runner and ships it over SSH to the
+# production host, where it runs as the `nousd_prod` container behind the reverse proxy.
+#
+# Everything about the host lives in the `production` environment (deployments from `main` only):
+#   secrets    PROD_SSH_KEY, PROD_SSH_HOST, PROD_SSH_USER, PROD_SSH_KNOWN_HOSTS, PROD_DEPLOY_PATH
+#   variables  NEXT_PUBLIC_SITE_URL, NEXT_PUBLIC_DEMO
+# RPC provider URLs are server-only and stay in <deploy path>/.env on the host, never in the build.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/deploy-prod.yml"
+      - "!**/*.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Build and ship standalone bundle
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      NEXT_PUBLIC_SITE_URL: ${{ vars.NEXT_PUBLIC_SITE_URL }}
+      NEXT_PUBLIC_DEMO: ${{ vars.NEXT_PUBLIC_DEMO }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install, check, build (standalone)
+        working-directory: web
+        env:
+          NEXT_OUTPUT_STANDALONE: "1"
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm run test:run
+          npm run build
+
+      # The standalone output leaves out static assets and public/; assemble the runnable tree.
+      - name: Assemble release tree
+        working-directory: web
+        run: |
+          set -euo pipefail
+          rm -rf ../.release && mkdir -p ../.release/.next/static
+          cp -r .next/standalone/. ../.release/
+          cp -r .next/static/. ../.release/.next/static/
+          if [ -d public ]; then cp -r public ../.release/public; fi
+          test -f ../.release/server.js
+          du -sh ../.release
+
+      # Host, user and path are masked and never echoed: the repository is public.
+      - name: Configure SSH
+        env:
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+          RAW_HOST: ${{ secrets.PROD_SSH_HOST }}
+          RAW_USER: ${{ secrets.PROD_SSH_USER }}
+          RAW_PATH: ${{ secrets.PROD_DEPLOY_PATH }}
+        run: |
+          set -euo pipefail
+          # A secret pasted from a browser often carries a trailing newline or quotes; strip them.
+          clean() { printf '%s' "$1" | tr -d '[:space:]' | tr -d "\"'"; }
+          SSH_HOST="$(clean "$RAW_HOST")"; SSH_USER="$(clean "$RAW_USER")"; DEPLOY_PATH="$(clean "$RAW_PATH")"
+          for v in SSH_HOST SSH_USER DEPLOY_PATH; do
+            [ -n "${!v}" ] || { echo "::error::$v is empty: set it in the production environment secrets."; exit 1; }
+            echo "::add-mask::${!v}"
+          done
+          case "$SSH_HOST$SSH_USER" in *[!A-Za-z0-9._-]*) echo "::error::PROD_SSH_HOST or PROD_SSH_USER has invalid characters."; exit 1 ;; esac
+          case "$DEPLOY_PATH" in /*) ;; *) echo "::error::PROD_DEPLOY_PATH must be absolute."; exit 1 ;; esac
+          { echo "SSH_HOST=$SSH_HOST"; echo "SSH_USER=$SSH_USER"; echo "DEPLOY_PATH=$DEPLOY_PATH"; } >> "$GITHUB_ENV"
+
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$PROD_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts && chmod 600 ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null 2>&1 || { echo "::error::PROD_SSH_KEY does not parse as an OpenSSH private key."; exit 1; }
+          echo "SSH_CMD=ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes -o ConnectTimeout=20" >> "$GITHUB_ENV"
+
+      - name: SSH preflight
+        run: $SSH_CMD "$SSH_USER@$SSH_HOST" true || { echo "::error::Cannot open an SSH session to the deploy host (key not authorised or known_hosts mismatch)."; exit 1; }
+
+      - name: Upload release
+        run: |
+          set -euo pipefail
+          RELEASE="${GITHUB_SHA::12}-$(date -u +%Y%m%d%H%M%S)"
+          echo "RELEASE=$RELEASE" >> "$GITHUB_ENV"
+          $SSH_CMD "$SSH_USER@$SSH_HOST" "mkdir -p '$DEPLOY_PATH/releases/$RELEASE'"
+          rsync -az --delete -e "$SSH_CMD" .release/ "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/releases/$RELEASE/"
+
+      - name: Activate release
+        run: |
+          set -euo pipefail
+          $SSH_CMD "$SSH_USER@$SSH_HOST" "DEPLOY_PATH='$DEPLOY_PATH' RELEASE='$RELEASE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+          test -f "releases/$RELEASE/server.js"
+          ln -sfn "$DEPLOY_PATH/releases/$RELEASE" current.new
+          mv -T current.new current
+          # The bind-mount source is a symlink resolved at container creation, hence --force-recreate.
+          docker compose up -d --force-recreate
+          # Keep the five newest releases as rollback targets.
+          ls -1dt releases/*/ | tail -n +6 | xargs -r rm -rf
+          REMOTE
+
+      - name: Verify
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            state=$($SSH_CMD "$SSH_USER@$SSH_HOST" "docker inspect -f '{{.State.Health.Status}}' nousd_prod" 2>/dev/null || echo pending)
+            echo "attempt $i: $state"
+            [ "$state" = "healthy" ] && exit 0
+            sleep 5
+          done
+          echo "::error::nousd_prod did not become healthy"
+          $SSH_CMD "$SSH_USER@$SSH_HOST" "docker logs --tail 80 nousd_prod" || true
+          exit 1
+
+      - name: Clean up SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
