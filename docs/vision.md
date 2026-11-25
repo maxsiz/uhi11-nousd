@@ -209,6 +209,7 @@ Limit values are a starting proposal, to be fitted on real pool data.
 | 2026-11-23 | Main chain is an L2; Ethereum mainnet is secondary. Keeper `sync()` hourly on L2, daily on Ethereum; per-chain `compound()` threshold; sequencer-uptime check on L2. |
 | 2026-11-24 | 1 noUSD = 1 stable at par, not 1 USD; oracle only as a depeg breaker. `claim()` pays in stables. Protocol fee parameter up to 10 %, 0 at launch. Recenter path required (design open). |
 | 2026-11-24 | Not upgradeable, all parameters capped in code. Burn delay parameter (0 at launch). Blast-style accrual (contracts opt in, 7702 EOAs accrue). Recenter accepted. No first-deposit protection (attack does not apply). Chains: Unichain, Arbitrum. |
+| 2026-11-25 | Chains: Ethereum + L2s, each with its own pair set from existing hookless v4 pools only (no pool creation); registry marks pools Active / WithdrawOnly. Ethereum launch set: USDe/USDC, DAI/USDT active, USDS/RLUSD registered but inactive (0.17 % APR). Oracle: reuse the deployed unisafe `ChainlinkPriceOracle` as a spot-manipulation guard; depeg = Uniswap spot vs par. Positions ≤ number of stables. Spec v1 written: `docs/spec.md`. |
 | 2026-11-24 | Governance confirmed (2-of-3 multisig, 48 h timelock for loosening). Proposed numbers, launch set (Arbitrum main, Unichain demo until a USDT0 oracle) and keeper calls. |
 | 2026-11-23 | Compared with Uniswap v2 LP tokens (share of reserves, price grows, no accounting needed). Open: is "noUSD ≈ $1" mandatory, or is a v2-style appreciating share acceptable? |
 
