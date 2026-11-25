@@ -366,6 +366,11 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors, IERC20Permit, IERC3009, 
         return accrued[a] + earned;
     }
 
+    /// @notice What the manager's body backs, without its own carry: supply plus every unpaid accrual.
+    function liabilities() external view returns (uint256) {
+        return totalSupply + totalUnclaimed + treasuryAccrued;
+    }
+
     function isExcluded(address a) external view returns (bool) {
         return _load(a).flags & EXCLUDED != 0;
     }

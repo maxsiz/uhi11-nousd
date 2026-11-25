@@ -203,6 +203,13 @@ contract NoUSDTest is Test {
         assertEq(token.accrued(alice), 1);
     }
 
+    function test_liabilities() public {
+        token.mint(alice, 100e18);
+        token.distribute(10e18);
+        token.accrueTreasury(3e18);
+        assertEq(token.liabilities(), 113e18);
+    }
+
     function test_treasury() public {
         token.accrueTreasury(3e18);
         assertEq(token.consumeTreasury(), 3e18);
