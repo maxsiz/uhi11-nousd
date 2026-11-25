@@ -174,7 +174,7 @@ per-feed heartbeat, sequencer feed, `maxSpotDeviationBps`); the manager does not
 struct Account {
     uint128 balance;
     uint120 checkpoint;   // accPerShare at last touch (see 5.2)
-    uint8   flags;        // bit0 = excluded, bit1 = classified, bit2 = optedIn
+    uint8   flags;        // bit0 = excluded, bit1 = classified, bit2 = manual (mode chosen by the holder)
 }
 mapping(address => Account) internal _accounts;
 mapping(address => uint256) public accrued;      // slot B, value at par (18 dec)
@@ -200,7 +200,10 @@ address public immutable manager;
   - `eligible = totalSupply − excludedSupply`;
   - if `eligible == 0`: `treasuryAccrued += value`, `remainder = 0`;
   - else `delta = value × ACC_SCALE / eligible` (round down); `accPerShare += delta`;
-    `distributed = delta × eligible / ACC_SCALE` (round down); `totalUnclaimed += distributed`;
+    `distributed = delta × eligible / ACC_SCALE` (**round up**: holders settle with a floor over spans
+    that may cover several distributions, so a floored total could fall below their sum and make a
+    later `consumeAccrued` underflow; `distributed ≤ value` because `delta` is floored);
+    `totalUnclaimed += distributed`;
     `remainder = value − distributed`. The manager adds `remainder` to `carry` (§6), so dust is
     distributed by a later `sync`.
 - `checkpoint` is stored as `uint120`. `accPerShare` MUST fit: with ACC_SCALE = 1e18, 2^120 ≈ 1.3e36
@@ -224,10 +227,12 @@ address public immutable manager;
     treated as EOA → accrues.
   - otherwise (a contract) → **excluded** unless it has opted in.
 - `configureAccrual(bool on)`: called by the address itself; a contract opts in (`on = true`) or out.
-  An EOA MAY opt out. Settles before switching; moves its balance in/out of `excludedSupply`.
-- `reclassify(address a)` (anyone): if `a` is not opted in and now has real code (non-7702), mark it
-  excluded (settle first; what it accrued stays claimable). If `a` is excluded, not opted in, and now has
-  no code or a 7702 designator, mark it accruing. No-op otherwise.
+  An EOA MAY opt out. Settles before switching; moves its balance in/out of `excludedSupply`; sets
+  `manual`, after which `reclassify` leaves the address alone.
+- `reclassify(address a)` (anyone): no-op if `a` is `manual`. Otherwise, if `a` now has real code
+  (non-7702), mark it excluded (settle first; what it accrued stays claimable); if it has no code or a
+  7702 designator, mark it accruing. No-op when the mode does not change. (An "opted-in" bit alone would
+  let `reclassify` undo an EOA's own opt-out.)
 - Contracts under construction (`code.length == 0` in constructor) are classified as EOA; `reclassify`
   fixes it later. The manager itself is excluded (it holds the burn-queue escrow).
 
