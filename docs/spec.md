@@ -126,8 +126,11 @@ PoolId[] public poolIds;  // length ≤ MAX_POOLS
   (only the registry may call it), which runs `_sync()` first, then removes all liquidity of that
   position to the manager's idle balances; the registry marks the pool WithdrawOnly. Idle balances are
   paid out pro-rata by burn/claim and redeployed by mint pairing (§9.1) and compound.
-- Removing a pool from `poolIds` is allowed only when its position liquidity is 0 and it holds no
-  accounted-but-uncollected fees.
+- Removing a pool from `poolIds` (`removePool`, immediate) is allowed only for a WithdrawOnly pool whose
+  position holds no liquidity and no accounted-but-uncollected fees (`manager.isPositionEmpty`).
+- A range preset MUST contain the par tick of the pool (price 1 unit of currency0 = 1 unit of currency1,
+  adjusted for decimals; `registry.parTick(key)`), otherwise `InvalidRange`.
+- `retirePool` marks the pool WithdrawOnly first, then calls `manager.retire` (checks-effects-interactions).
 
 ### 4.3 Parameters
 
@@ -162,6 +165,15 @@ per-feed heartbeat, sequencer feed, `maxSpotDeviationBps`); the manager does not
   This includes changing `oracle` or `treasury`, adding a pool/token, pool → Active, a range preset,
   raising `protocolFeeBps`, `supplyCap` or a share cap, `selectionWindow`, `unpauseMint()`.
 - There is **no pause of burn or claim**.
+- **Mechanics.** Every setter decides itself whether the call tightens. A loosening call is accepted only
+  from the registry itself, i.e. through `execute` (owner-only) of a call queued ≥ 48 h earlier; `execute`
+  cannot reach owner-only functions (ownership, queue) because the caller is then the registry.
+- **Setup phase.** Until `setManager` is called (deployment), the owner applies any change at once:
+  nothing is at stake, and the launch set of tokens and pools must be configured in the deploy
+  transaction. `setManager` ends the phase for good.
+- Defaults at construction: `depegBps = 50`, `maxPoolShareBps = 3 000`, `selectionWindow = 7 days`,
+  everything else 0 — with `supplyCap = 0` and no oracle nothing can be minted until configured.
+- `renounceOwnership` is disabled: without an owner nobody could tighten in an emergency.
 
 ---
 
