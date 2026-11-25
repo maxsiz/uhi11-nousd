@@ -33,5 +33,17 @@ With `NEXT_PUBLIC_DEMO=0` the app uses the injected wallet; sending refuses with
 | price guard | deployed unisafe `IPriceOracle.check` |
 | governance queue | `Registry` timelock events |
 
-Not wired yet: ENS resolution for custom recipients (any `*.eth` is accepted as typed) and a same-origin
-RPC proxy (public transports are used).
+Not wired yet: ENS resolution for custom recipients (any `*.eth` is accepted as typed).
+
+## RPC
+
+wagmi talks to the same-origin proxy `/api/rpc/<chainId>` (`src/app/api/rpc`). The proxy reads the
+upstream URL from a server-only variable (`MAINNET_RPC_URL`, `UNICHAIN_RPC_URL`, `ARBITRUM_RPC_URL`,
+`BASE_RPC_URL`, each with an optional `<VAR>_FALLBACK` used on 429), refuses broadcasting and debug
+methods, caps body and batch size and rate-limits per client (`src/lib/server/rpc.ts`).
+
+## Production
+
+`.github/workflows/deploy-prod.yml` builds a standalone bundle on push to `main` (paths `web/**`) and
+ships it over SSH. Host details live only in the `production` environment's secrets; RPC URLs live only
+on the host.

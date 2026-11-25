@@ -48,6 +48,17 @@ export function Toast() {
  * The prototype's "Prototype states" dock: forces wallet types, mint outcomes, the redeem delay and a
  * refused payout. Demo mode only; it disappears once the app runs against deployed contracts.
  */
+/** Says plainly that the numbers are illustrative until the contracts are live. */
+export function DemoBanner() {
+  if (!IS_DEMO) return null;
+  return (
+    <div role="note" className="border-b border-warn-line bg-warn-soft px-4 py-2 text-center text-[12.5px] leading-snug">
+      <b className="text-warn">Demo</b>
+      <span className="text-tx2"> · contracts coming soon. Numbers and transactions here are simulated.</span>
+    </div>
+  );
+}
+
 export function DemoDock() {
   const app = useApp();
   const router = useRouter();
