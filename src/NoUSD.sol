@@ -284,6 +284,12 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors, IERC20Permit, IERC3009, 
         emit Transfer(from, address(0), amount);
     }
 
+    /// @notice Moves `amount` from `from` to the manager (delayed-burn escrow, spec §9.3). The manager calls
+    /// it only for the holder that requests the burn; both sides settle as in any transfer.
+    function pullToManager(address from, uint256 amount) external onlyManager {
+        _transfer(from, manager, amount);
+    }
+
     /// @notice Moves the accumulator by `value` spread over eligible supply.
     /// @return remainder The part of `value` not distributed because of rounding; the manager carries it.
     function distribute(uint256 value) external onlyManager returns (uint256 remainder) {

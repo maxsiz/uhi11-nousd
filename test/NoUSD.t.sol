@@ -107,6 +107,18 @@ contract NoUSDTest is Test {
         vm.stopPrank();
     }
 
+    function test_pullToManager() public {
+        token.mint(alice, 10e18);
+        token.distribute(5e18);
+        token.pullToManager(alice, 4e18);
+        assertEq(token.balanceOf(address(this)), 4e18);
+        assertEq(token.accrued(alice), 5e18, "settled before the move");
+        assertTrue(token.isExcluded(address(this)), "manager is a contract, excluded");
+        vm.prank(alice);
+        vm.expectRevert(NoUSD.NotManager.selector);
+        token.pullToManager(alice, 1);
+    }
+
     function test_mint_overflowReverts() public {
         token.mint(alice, type(uint128).max);
         vm.expectRevert(NoUSD.BalanceOverflow.selector);
