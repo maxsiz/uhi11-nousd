@@ -188,7 +188,7 @@ uint256 public treasuryAccrued;  // protocol-fee accrual, value at par
 address public immutable manager;
 ```
 
-- ERC-20 + EIP-2612 `permit`. Written by hand on top of OZ 5.x interfaces (do **not** subclass OZ
+- ERC-20 plus the signature standards of §5.6. Written by hand on top of OZ 5.x interfaces (do **not** subclass OZ
   `ERC20`: its `_balances` cannot hold the packed layout). Run an ERC-20 property suite against it.
 - `balance` is `uint128`: supply above 3.4e20 noUSD is impossible by construction; `_mint` MUST revert
   if it would overflow.
@@ -254,6 +254,23 @@ function consumeTreasury() external returns (uint256 paid);         // paid = tr
 
 `pendingAccrued(a)` = `accrued[a] + balance × (accPerShare − checkpoint) / ACC_SCALE` (0 term if
 excluded). `isExcluded(a)`, `eligibleSupply()`.
+
+### 5.6 Standards and gasless transfers
+
+| Standard | In v1 | Notes |
+|---|---|---|
+| ERC-6093 | yes | OZ `IERC20Errors` custom errors |
+| EIP-2612 `permit` | yes | sequential nonces (OZ `Nonces`); extra overload with `bytes signature` (as USDC v2.2) |
+| EIP-3009 transfer / receive / cancel with authorization | yes | USDC semantics: random `bytes32` nonces, each used once (`authorizationState`); nonces separate from permit; `receiveWithAuthorization` only by the payee; x402-compatible |
+| ERC-7598 | yes | `bytes signature` overloads of the EIP-3009 functions |
+| ERC-1271 | yes | for permit and EIP-3009: ECDSA is tried first, then ERC-1271 if the signer has code — OZ `SignatureChecker` alone would reject plain key signatures of EIP-7702 delegated EOAs |
+| ERC-5267 `eip712Domain()` | yes | OZ `EIP712`, domain name `noUSD`, version `1`, chain id, token address |
+| ERC-3156 flash mint | **no** | a loan inflates eligible supply; a `sync` inside it would hand the borrower part of the distribution |
+| ERC-1363, ERC-7674, ERC-7802 / bridgeable, built-in Permit2 allowance | no | little use, extra surface; no bridging in v1; an immutable token cannot revoke a Permit2 bug |
+
+Every signed transfer goes through the same `_transfer` (settle both sides, lazy classification of `to`).
+OZ 5.7's `ERC20TransferAuthorization` is not used as a model: it reads the nonce as keyed-sequential,
+which rejects the random nonces USDC/x402 clients send.
 
 ---
 
