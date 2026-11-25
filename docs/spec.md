@@ -305,7 +305,11 @@ uint256 public carry;                                // undistributed value (dus
 struct BurnRequest { address owner; address to; uint128 amount; uint64 readyAt; uint128 minOut; bool done; }
 BurnRequest[] public burnQueue; uint256 public queueHead;
 uint256 public escrowed;                             // noUSD held by the manager for pending requests
+Currency[] internal _currencies;                     // every currency ever held, for idle payouts
 ```
+
+Burn and claim pay idle of every currency in `_currencies`, so idle of a pool removed from the registry
+(e.g. after `retirePool` + `removePool`) is still paid out.
 
 **Body** = all position liquidity + `idle` + uncollected fees. Invariant (at par, up to rounding and
 in-range composition drift):
@@ -403,8 +407,11 @@ paused token blocks burn until it is unpaused; that is the token's property, not
       (they were already accounted by `_sync` in step 2 — see §9.4).
    d. `_pegOk` on both pools; share cap of the add pool after the add.
    e. settle / take with `CurrencySettler` patterns; check `msg.sender == poolManager`.
-6. `added = Σ norm(amounts added as liquidity) − norm(k)` — only the minter's contribution (the idle
-   `k` already belonged to holders). Leftovers of the minter's tokens (in `t` or `u`) are refunded to
+6. `added = value(L_added) − norm(k)` — only the minter's contribution (the idle `k` already belonged
+   to holders). `value(L_added)` is the value at par of the added liquidity at the current price with
+   amounts **rounded down** (`SqrtPriceMath.getAmount*Delta(…, false)`), not the rounded-up amounts v4
+   charged: crediting the paid amounts would create up to 1 wei of each token per mint (1e12 at par for a
+   6-decimal token) and break `body ≥ liabilities`. Leftovers of the minter's tokens (in `t` or `u`) are refunded to
    `msg.sender`.
 7. `fee = added × mintFeeBps / 10 000`; `out = added − fee`; `carry += fee`.
 8. `require(out ≥ minOut)`; `require(totalSupply + out ≤ supplyCap)`; `token.mint(to, out)`.
