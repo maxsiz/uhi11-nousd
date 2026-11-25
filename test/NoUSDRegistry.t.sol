@@ -98,6 +98,15 @@ contract NoUSDRegistryTest is Test {
         assertFalse(p.mintPaused);
     }
 
+    function test_coreParams_matchParams() public view {
+        NoUSDRegistry.Params memory p = reg.params();
+        NoUSDRegistry.CoreParams memory c = reg.coreParams();
+        assertEq(c.depegBps, p.depegBps);
+        assertEq(c.selectionWindow, p.selectionWindow);
+        assertEq(c.maxPoolShareBps, p.maxPoolShareBps);
+        assertEq(c.mintPaused, p.mintPaused);
+    }
+
     function test_setupPhase_configuredWithoutDelay() public view {
         NoUSDRegistry.Params memory p = reg.params();
         assertEq(p.supplyCap, 100_000e18);

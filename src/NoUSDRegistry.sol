@@ -57,6 +57,18 @@ contract NoUSDRegistry is Ownable2Step {
         address treasury;
     }
 
+    /// @notice The parameters packed in the first storage slot of Params: what the manager reads on every
+    /// sync, burn and mint, at the cost of one SLOAD.
+    struct CoreParams {
+        uint32 burnDelay;
+        uint16 mintFeeBps;
+        uint16 protocolFeeBps;
+        uint16 depegBps;
+        uint16 maxPoolShareBps;
+        uint32 selectionWindow;
+        bool mintPaused;
+    }
+
     /// @notice Delay for every loosening change (spec §4.4).
     uint256 public constant TIMELOCK = 48 hours;
     /// @notice Maximum number of registered pools (spec §4.2).
@@ -388,6 +400,19 @@ contract NoUSDRegistry is Ownable2Step {
 
     function params() external view returns (Params memory) {
         return _params;
+    }
+
+    function coreParams() external view returns (CoreParams memory c) {
+        Params storage p = _params;
+        c = CoreParams({
+            burnDelay: p.burnDelay,
+            mintFeeBps: p.mintFeeBps,
+            protocolFeeBps: p.protocolFeeBps,
+            depegBps: p.depegBps,
+            maxPoolShareBps: p.maxPoolShareBps,
+            selectionWindow: p.selectionWindow,
+            mintPaused: p.mintPaused
+        });
     }
 
     function tokens(Currency token) external view returns (TokenConfig memory) {
