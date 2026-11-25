@@ -1,6 +1,6 @@
 # CLAUDE.md — uhi11-nousd
 
-noUSD: an ERC-20 stablecoin backed by one shared vault of stable/stable liquidity on hookless
+noUSD: an ERC-20 stablecoin backed by one shared pool of stable/stable liquidity, held by `NoUSDPositionManager`, on hookless
 Uniswap v4 pools. Hackathon project UHI11, personal GitHub remote `maxsiz/uhi11-nousd` (use `gh`,
 not `glab`). Lives in the `ev2` workspace next to the unisafe repos but does not depend on their code.
 

@@ -1,19 +1,20 @@
 # noUSD — current vision (model v3)
 
-> Status: **working notes, not a spec.** This captures where the design stands on 2026-11-23
-> after several rounds of "find the contradiction, resolve it". Decisions carry the date they were
-> taken; open questions are listed explicitly. The visual version (Russian, with diagrams) is
-> [`nousd-model.ru.html`](nousd-model.ru.html).
+> Status: **working notes, not a spec.** The contracts are specified in [`spec.md`](spec.md)
+> (v1.1, 2026-11-25); where this file and the spec differ, the spec wins. This file keeps the
+> rationale and the decision log. Decisions carry the date they were taken. The visual version
+> (Russian, with diagrams) is [`nousd-model.ru.html`](nousd-model.ru.html).
 
 ## One paragraph
 
-noUSD is a single ERC-20 that is also a shared vault of stablecoin liquidity on Uniswap v4.
-Anyone deposits an allowed stablecoin; **in the same transaction** the vault swaps part of it and
-adds liquidity to one of its stable/stable positions, then mints noUSD for the value actually
-deposited. Burning noUSD returns the holder's pro-rata share of **every** position, in every token,
-to any recipient they choose — no oracle, no swap, no permission. Trading fees stay inside the
-positions and keep compounding; who owns them is tracked by a per-token fee accumulator, the same
-idea as `feeGrowth` in v4 itself, so each holder earns only from the moment they entered.
+noUSD is an ERC-20 backed by a shared pool of stablecoin liquidity on Uniswap v4, held by one
+contract, `NoUSDPositionManager`. Anyone deposits an allowed stablecoin; **in the same transaction**
+the manager pairs it with its idle balance of the other stable and/or swaps part of it, adds
+liquidity to one of its stable/stable positions, then mints noUSD for the value the minter
+contributed. Burning noUSD returns the holder's pro-rata share of **every** position, in every token,
+to any recipient they choose — no oracle, no swap, no permission. Who owns the trading fees is
+tracked by a per-token fee accumulator, the same idea as `feeGrowth` in v4 itself, so each holder
+earns only from the moment they entered; holders take them with `claim()` in stables.
 
 ## Architecture
 
@@ -22,22 +23,24 @@ idea as `feeGrowth` in v4 itself, so each holder earns only from the moment they
    multisig ─► limits, depeg thresholds (Registry)
                           │ read on every mint
                           ▼
-   user ──mint──► noUSD Vault  (ERC-20 + owner of all positions)
-   user ◄─burn──      │   fee accumulator ("fees per 1 noUSD"), claim()
+   user ──mint──► NoUSDPositionManager  (owner of all positions, idle, burn queue)
+   user ◄─burn──      │  mints / burns / distributes
+                      ├──► NoUSD (ERC-20, fee accumulator "fees per 1 noUSD", accrued)
                       ▼
           Uniswap v4 PoolManager (one unlock per mint / burn)
-            ├─ USDC/USDT 0.01%   position
-            ├─ USDC/USDT 0.05%   position
-            └─ USDC/DAI  0.01%   position
+            ├─ USDe/USDC   position
+            ├─ DAI/USDT    position
+            └─ USDS/RLUSD  position (WithdrawOnly at launch)
    Stage 2 (maybe never): PSM hook 1:1
 ```
 
-* **Vault = token.** One contract, one ERC-20, owns all positions. No second token, no rebase.
+* **Manager + token.** The manager owns all positions; noUSD is a separate ERC-20 that only the
+  manager can mint, burn and move the counter of (decided 2026-11-23). No rebase.
 * **Registry.** Which stables are allowed, which pools are admissible, limits, depeg thresholds.
-  Governed by a 2-of-3 multisig: tightening is immediate, loosening goes through a 48–72 h timelock.
+  Governed by a 2-of-3 multisig: tightening is immediate, loosening goes through a 48 h timelock.
   Neither the registry nor any pause can stop `burn`.
-* **Positions.** Hookless v4 stable pools, wide preset ranges (±1–2 %), at most ~8 positions to bound
-  gas. No operator.
+* **Positions.** Existing hookless v4 stable pools, fixed preset ranges around par (±1–2 %), at most 8
+  positions to bound gas. No operator, no automatic recenter.
 
 ## Mint — one transaction, one `unlock` (decided 2026-11-21)
 
@@ -46,26 +49,32 @@ idea as `feeGrowth` in v4 itself, so each holder earns only from the moment they
 2. **Pick the position** (hybrid selection, below).
 3. **Settle fees before entry:** `sync()` — read fee growth of every position and move the
    accumulator, so fees earned so far go to existing holders and the new minter gets none of them.
-4. **Swap** the needed part of the deposit in pool **A** — whichever is cheapest for the minter.
-5. **Add liquidity** in pool **B** — whichever is best for holders. Flash accounting nets A and B.
-6. **Mint noUSD for the value actually added**, to `to`, subject to `minOut`. The minter pays the
-   swap: 10 USDC → ≈ 9.9993 noUSD at a 0.01 % pool.
+4. **Pair with idle** (decided 2026-11-25): if the manager holds idle tokens of the other currency
+   (left from a retired pool or from `compound()`), they go into the add as the counterpart of the
+   deposit; the minter is credited only for their own tokens.
+5. **Swap** the rest of the needed part in pool **A** — whichever is cheapest for the minter.
+6. **Add liquidity** in pool **B** — whichever is best for holders. Flash accounting nets A and B.
+7. **Mint noUSD for the value the minter added**, to `to`, subject to `minOut` and `deadline`. The
+   minter pays the swap: 10 USDC → ≈ 9.9993 noUSD at a 0.01 % pool (less with idle pairing).
 
-If the swap or the add is impossible → **revert**. There is no idle balance and no "waiting for
-deploy" state, so every noUSD in existence is working capital from its first block. This is what
-makes a plain balance-weighted accumulator exact (see the simulation).
+If the swap or the add is impossible → **revert**. A deposit never waits in idle for deployment, so
+every noUSD minted is working capital from its first block. This is what makes a plain
+balance-weighted accumulator exact (see the simulation). Idle that the manager itself creates
+(retire, compound leftovers) belongs to all holders pro-rata and is redeployed by mints.
 
 ## Burn
 
-* Share `s = x / (supply + unclaimed)`, computed before burning.
-* `sync()` first, then remove share `s` of liquidity from every position (this collects all their
-  fees; the vault re-adds what is not the burner's — `compound()`); all tokens go to `recipient`.
-* Fees accrued up to that moment stay with the holder and are taken with `claim()`.
-* No swap, no token choice, no oracle, cannot be paused.
+* `sync()` first. `D = supply + unclaimed + treasury accrual + carry`, computed before burning.
+* The burner's accrued `a` is paid in the same call: fraction `f = (x + a) / D` of liquidity of every
+  position and of idle (removing liquidity collects all the position's fees into idle; what is not the
+  burner's stays and is re-added later by `compound()`); all tokens go to `to`.
+* `minOut` (value at par) and `deadline` protect against sandwiching (decided 2026-11-25).
+* No swap, no token choice, no oracle, cannot be paused. A token refusing to pay `to` reverts with
+  `PayoutFailed(token, to)` — pick another recipient.
 
 ## Fees (accounting decided 2026-11-23)
 
-noUSD is a **separate ERC-20 contract**; the vault is its only minter/burner and the only caller of
+noUSD is a **separate ERC-20 contract**; the manager is its only minter/burner and the only caller of
 `distribute()`.
 
 **State in the token**
@@ -73,7 +82,7 @@ noUSD is a **separate ERC-20 contract**; the vault is its only minter/burner and
 | Where | Field | Written by |
 |---|---|---|
 | global | `accPerShare` — fees in noUSD earned by 1 noUSD since launch (only grows) | `sync()` via `distribute(F)` |
-| global | `totalUnclaimed` — credited to holders, not yet minted | `distribute` (+), `claim` (−) |
+| global | `totalUnclaimed` — credited to holders, not yet paid out | `distribute` (+), `claim` / `burn` (−) |
 | global | `excludedSupply` — balance of excluded addresses (DEX pools, bridges) | transfers touching them |
 | per address, slot 1 | `balance (uint128) \| checkpoint (uint120) \| excluded flag` | every transfer, like any ERC-20 balance |
 | per address, slot 2 | `accrued` — earned, not claimed | only when `accPerShare` moved since the last touch |
@@ -93,29 +102,30 @@ with a fixed gas stipend.
 |---|---|---|---|
 | 00:00 | sync | — | counter 0, unclaimed 0 |
 | 12:00 | Alice → Carol 200k ($50 already in pools, counter doesn't see it) | Alice: `600k × (0−0) = 0`, cp 0; Carol: `0`, cp 0 | Alice 400k, Bob 400k, Carol 200k |
-| 24:00 | keeper `sync()` | `F = 60·min(p_USDC,1) + 40·min(p_USDT,1) = $100`; `Δcounter = F / (supply − excluded) = 100/1M` | counter 100, unclaimed $100, no tokens moved |
-| 24:05 | Carol burns 100k | Carol accrued `200k × 100/1M = $20`; `s = 100k / (1M + 100)`; compound → body $1 000 100; Carol takes `s × 1 000 100 = $100 000` | supply 900 000; `900 000 + 100 = 900 100` = body ✓ |
-| 24:10 | Bob `claim()` | `400k × 100/1M = $40` → mint 40 noUSD | supply 900 040, unclaimed 60; `900 040 + 60 = 900 100` ✓ |
+| 24:00 | keeper `sync()` | `F = 60 USDC + 40 USDT = $100` at par; `Δcounter = F / (supply − excluded) = 100/1M` | counter 100, unclaimed $100, no tokens moved |
+| 24:05 | Carol burns 100k | Carol accrued `a = 200k × 100/1M = $20`; `f = (100k + 20) / (1M + 100)`; body $1 000 100 → Carol takes `f × 1 000 100 = $100 020` in kind (her $20 included) | supply 900 000, unclaimed 80; `900 000 + 80 = 900 080` = body ✓ |
+| 24:10 | Bob `claim()` | `400k × 100/1M = $40`, paid in stables: `40 / 900 080` of every position | supply 900 000, unclaimed 40 (Alice's); `900 000 + 40 = 900 040` = body ✓ |
 
 Result: Alice $40, Bob $40, Carol $20 = $100 earned. The exact split by capital × time is
 50/40/10: L misallocates only between the two sides of a transfer, at most
 `amount × unsynced yield per noUSD` (here $10).
-Invariant at every step: `supply + totalUnclaimed = value of the position bodies`.
+Invariant at every step: `supply + totalUnclaimed (+ treasury accrual + carry) = value of the body` at par.
 
 **`sync()` vs `compound()`** — two different operations:
 
 | | `sync()` — accounting | `compound()` — reinvest |
 |---|---|---|
-| does | reads `feeGrowthInside` vs `feeGrowthInsideLast` per position, values at `min(oracle,1)`, moves the counter; no tokens move | `modifyLiquidity` on the position: v4 pays out all its fees (`callerDelta = principal + feesAccrued`), the vault adds them back as liquidity |
+| does | reads `feeGrowthInside` vs the manager's own `fgAccounted` per position, values at par, moves the counter; no tokens move | `modifyLiquidity` on the position: v4 pays out all its fees (`callerDelta = principal + feesAccrued`), the manager adds them back as liquidity (spot must be at par) |
 | matters for | fairness (the buy-before-sync attack targets the counter) | yield only |
 | mint | mandatory before entry, all positions | position B only (the add collects its fees) |
 | burn | mandatory before computing the share | all positions (burn touches each) |
 | quiet day | keeper hourly on L2 (~$0.015/call), daily on Ethereum; anyone may call | when uncollected fees exceed a threshold |
 | gas, 8 positions (rough) | ~200–250k | ~0.7–1M |
 
-**Chains.** The main deployment is an L2; Ethereum mainnet is secondary (presence only — every
-operation costs ~500× more there). One codebase, per-chain parameters: keeper interval (1 h on L2,
-24 h on Ethereum), `compound()` threshold, and a sequencer-uptime check before the oracle on L2.
+**Chains** (final 2026-11-25). Ethereum is the initial deployment; each L2 gets its own deployment
+with its own pair set from existing hookless pools. One codebase, per-chain parameters: keeper
+interval (1 h on L2, 24 h on Ethereum), `compound()` threshold; the sequencer-uptime check lives in the
+unisafe oracle.
 
 Why daily is enough: buying noUSD on a DEX, calling `sync()` and selling pays only when the
 unsynced yield per noUSD exceeds the round-trip cost — ~1.75 days without sync in a 0.01 % pool,
@@ -147,7 +157,7 @@ if Carol bought them). Result: Alice $50, Bob $40, Carol $10 — exact.
 | token price | grows: 1.0001 after a day, ~1.05 after a year at 5 % | ≈ $1 |
 | where fees sit | v2: in reserves at once. On v4: next to the position, must be included in the share price at mint/burn | next to the position, accounted on `sync()` |
 | mint | at share price | at deposited value, `sync()` first |
-| burn | `x / supply` of value | `x / (supply + unclaimed)`, accrued stays |
+| burn | `x / supply` of value | `(x + accrued) / (supply + unclaimed)`, accrued paid in the same call |
 | transfer | plain ERC-20, ~34.5k | +2.4–12.4k |
 | per-address state | balance | balance, checkpoint, accrued |
 | paying out yield | not needed — it is in the price | `claim()` pays accrued in stables, pro-rata from all positions (decided 2026-11-24) |
@@ -165,9 +175,10 @@ and Uniswap itself tracks them with the same pattern we use: `feeGrowthInside` i
 `feeGrowthInsideLast` the checkpoint, `tokensOwed` the accrued slot. Variant L moves v3/v4 fee
 accounting from positions to token holders.
 
-Taken from v2 regardless of the choice: `_mintFee` (lines 89–107) as the protocol-share pattern —
-mint the treasury 1/6 of `√k` growth lazily, here on `sync()`; `MINIMUM_LIQUIDITY = 1000` locked at
-`address(0)` (lines 120–121) against share inflation; burn by actual balances, not cached reserves.
+Taken from v2: `_mintFee` (lines 89–107) as the protocol-share pattern — the treasury share is
+taken lazily, here on `sync()`; burn by actual balances, not cached reserves. **Not** taken:
+`MINIMUM_LIQUIDITY` (lines 120–121) — noUSD is minted at par, not at a share price, so the
+inflation attack it defends against does not apply (decided 2026-11-24).
 
 **Resolved 2026-11-24:** 1 noUSD = 1 stable of the basket (not 1 USD), so L stays. Before that: if "≈ $1" is mandatory, L stays. If an appreciating noUSD is acceptable, the v2 model
 removes accrued slots, `claim`, the keeper and the transfer error — but it is then a yield share like
@@ -181,9 +192,10 @@ v4 has several pools with the same pair and different fee tiers and depth. On-ch
 |---|---|---|
 | Admission | Registry | hookless pools, allowed stables and fee tiers, price inside the preset range |
 | Limits | Registry | our share ≤ 30 % of pool liquidity, max weight in the basket, minimum pool liquidity |
-| Signal | Contract | inside the limits: yield per unit of liquidity from `feeGrowthGlobal` over 7 days × `L/(L+x)` (dilution by our own deposit) |
+| Signal | Contract | inside the limits: yield per unit of liquidity from `feeGrowthGlobal` over the selection window (7 days) × `L/(L+x)` (dilution by our own deposit) |
 
-The vault snapshots `feeGrowthGlobal` with timestamps on each poke. The signal can be pumped with
+The manager keeps two `feeGrowthGlobal` points per pool and rotates them on `sync()` once per
+window, so the measured window is 7–14 days (decided 2026-11-25). The signal can be pumped with
 `donate()` or wash swaps (`Pool.sol` adds donations to `feeGrowthGlobal`); that costs the attacker
 real money, and the share limit plus the 7-day window cap how much of our capital they can steer.
 Limit values are a starting proposal, to be fitted on real pool data.
@@ -206,12 +218,13 @@ Limit values are a starting proposal, to be fitted on real pool data.
 | 2026-11-21 | Mint in one transaction: swap in pool A, add in pool B, revert if impossible. No idle balance. |
 | 2026-11-21 | Pool selection: hybrid (registry admission + limits, on-chain yield signal). |
 | 2026-11-23 | noUSD is a separate ERC-20. Fee accounting variant L: transfers checkpoint both sides, only `sync()` moves the counter (on mint, burn, and a keeper at least daily). `compound()` is a separate, threshold-driven operation. Variant E (exact, transfer reads the pools) rejected on gas. |
-| 2026-11-23 | Main chain is an L2; Ethereum mainnet is secondary. Keeper `sync()` hourly on L2, daily on Ethereum; per-chain `compound()` threshold; sequencer-uptime check on L2. |
-| 2026-11-24 | 1 noUSD = 1 stable at par, not 1 USD; oracle only as a depeg breaker. `claim()` pays in stables. Protocol fee parameter up to 10 %, 0 at launch. Recenter path required (design open). |
-| 2026-11-24 | Not upgradeable, all parameters capped in code. Burn delay parameter (0 at launch). Blast-style accrual (contracts opt in, 7702 EOAs accrue). Recenter accepted. No first-deposit protection (attack does not apply). Chains: Unichain, Arbitrum. |
-| 2026-11-25 | Chains: Ethereum + L2s, each with its own pair set from existing hookless v4 pools only (no pool creation); registry marks pools Active / WithdrawOnly. Ethereum launch set: USDe/USDC, DAI/USDT active, USDS/RLUSD registered but inactive (0.17 % APR). Oracle: reuse the deployed unisafe `ChainlinkPriceOracle` as a spot-manipulation guard; depeg = Uniswap spot vs par. Positions ≤ number of stables. Spec v1 written: `docs/spec.md`. |
-| 2026-11-24 | Governance confirmed (2-of-3 multisig, 48 h timelock for loosening). Proposed numbers, launch set (Arbitrum main, Unichain demo until a USDT0 oracle) and keeper calls. |
+| 2026-11-23 | Main chain is an L2; Ethereum mainnet is secondary. Keeper `sync()` hourly on L2, daily on Ethereum; per-chain `compound()` threshold; sequencer-uptime check on L2. *(Chains superseded 2026-11-25.)* |
 | 2026-11-23 | Compared with Uniswap v2 LP tokens (share of reserves, price grows, no accounting needed). Open: is "noUSD ≈ $1" mandatory, or is a v2-style appreciating share acceptable? |
+| 2026-11-24 | 1 noUSD = 1 stable at par, not 1 USD; oracle only as a depeg breaker. `claim()` pays in stables. Protocol fee parameter up to 10 %, 0 at launch. Recenter path required (design open). |
+| 2026-11-24 | Not upgradeable, all parameters capped in code. Burn delay parameter (0 at launch). Blast-style accrual (contracts opt in, 7702 EOAs accrue). Recenter accepted *(removed 2026-11-25)*. No first-deposit protection (attack does not apply). Chains: Unichain, Arbitrum *(superseded 2026-11-25)*. |
+| 2026-11-24 | Governance confirmed (2-of-3 multisig, 48 h timelock for loosening). Proposed numbers, launch set (Arbitrum main, Unichain demo until a USDT0 oracle) and keeper calls. |
+| 2026-11-25 | Chains: Ethereum + L2s, each with its own pair set from existing hookless v4 pools only (no pool creation); registry marks pools Active / WithdrawOnly. Ethereum launch set: USDe/USDC, DAI/USDT active, USDS/RLUSD registered but inactive (0.17 % APR). Oracle: reuse the deployed unisafe `ChainlinkPriceOracle` as a spot-manipulation guard (no per-token adapters); depeg = Uniswap spot vs par. Positions ≤ number of stables. Spec v1 written: `docs/spec.md`. |
+| 2026-11-25 | Spec review → v1.1. `NoUSDVault` renamed `NoUSDPositionManager`. **Recenter removed**: for stable pools "out of range" already means spot is further from par than `depegBps`, so its condition could never hold; positions stay at the registry preset, a new preset (timelock) is applied by permissionless `applyRange`. Mint pairs the deposit with idle of the other currency before swapping (idle from retire/compound is redeployed). `minOut` + `deadline` on burn/claim, `deadline` on mint. A token refusing a payout reverts with `PayoutFailed(token, to)` — retry with another recipient. Pool-selection window rotates per `selectionWindow`. `supplyCap` for a guarded launch. |
 
 ## Why the accumulator — simulation
 
@@ -236,7 +249,7 @@ Decided 2026-11-24:
 - Protocol fee: `protocolFeeBps`, capped at 10 % in code, 0 at launch, taken on `sync()` into a
   treasury accrual.
 - **Contracts are not upgradeable.** Every parameter is provisioned now with a hard cap in code
-  (`protocolFeeBps`, `mintFeeBps`, burn delay, recenter timing); a bug fix is a new deployment and
+  (`protocolFeeBps`, `mintFeeBps`, burn delay, `supplyCap`); a bug fix is a new deployment and
   holders migrate via burn → mint. Burn can never be blocked, only delayed within its cap.
 - **Burn delay** is a parameter, 0 at launch. With T > 0: `requestBurn(x)` escrows noUSD (it stops
   accruing), anyone executes after T, and the share is computed at execution — otherwise a request
@@ -245,19 +258,21 @@ Decided 2026-11-24:
   themselves; no governed list. An EIP-7702-delegated EOA (code `0xef0100…`) counts as an EOA.
   A public `reclassify(addr)` excludes an address that later got real code; what it already
   accrued stays claimable.
-- **Recenter:** permissionless `recenter(pos)` with no free parameters — out of range for N hours,
-  both stables at peg by oracle, new range = registry preset around the current price, no swap
-  (leftover waits for mint or `compound()`), cooldown. Under depeg: no recenter, the position is
-  dropped from pool selection.
+- **Recenter** *(removed 2026-11-25)*: was a permissionless `recenter(pos)` — out of range for N hours,
+  both stables at peg, new range around the current price. Its two conditions contradict each other
+  for stable pools; replaced by governance presets + `applyRange` (see the decision log).
 - **No first-deposit protection:** the inflation attack does not apply — noUSD is minted for value
-  added, not at a share price, and nobody can donate into the vault's positions (a pool `donate`
+  added, not at a share price, and nobody can donate into the manager's positions (a pool `donate`
   arrives through `sync()` as fees). Rounding against the user stays a code rule.
-- **Chains:** Unichain and Arbitrum are the main deployments; Ethereum mainnet is secondary.
+- **Chains** *(superseded 2026-11-25)*: Ethereum first, then L2s with their own pair sets.
 
 Governance (confirmed 2026-11-24): 2-of-3 multisig sets parameters within the code caps;
 tightening is immediate, loosening goes through a 48 h timelock.
 
-## Proposal 2026-11-24: numbers, launch set, keeper (to approve)
+## Proposal 2026-11-24: numbers, launch set, keeper (historical)
+
+Approved numbers and the final launch set are in [`spec.md`](spec.md) §4.3 and §12. Recenter rows
+and per-token oracle adapters below were dropped on 2026-11-25.
 
 | Parameter | Cap in code | Launch | Why |
 |---|---|---|---|
@@ -289,16 +304,17 @@ Our service is primary; Gelato or Chainlink Automation is the backup where avail
 
 | Call | When | If the keeper is gone |
 |---|---|---|
-| `sync()` | hourly on L2, daily on Ethereum; once a day also records `feeGrowthGlobal` points for the 7-day yield in pool selection | transfer error grows; mint and burn still sync |
+| `sync()` | hourly on L2, daily on Ethereum; once per selection window also records `feeGrowthGlobal` points for pool selection | transfer error grows; mint and burn still sync |
 | `compound(pos)` | uncollected fees above threshold | fees idle but not lost; burn compounds |
 | `executeBurns(n)` | only if burn delay > 0 | holders execute their own requests |
-| `recenter(pos)` | out of range ≥ 6 h, both stables at peg | position idle; mint skips it |
+| `applyRange(pos)` | after a timelocked preset change, both stables at peg | position stays on the old range |
 | `reclassify(addr)` | an address that accrued now has real (non-7702) code | accrual stuck, not lost |
 
 It also alerts (no transactions): breaker on or stale feed, sequencer down, position out of range,
 pool share above cap, noUSD on DEX more than 0.3 % from 1, burn queue growing, keeper low on gas.
 
-Still open: approve the numbers and the launch set; oracle source for USDT0 on Unichain.
+Resolved 2026-11-25: numbers and the Ethereum launch set are in the spec; Unichain stays without
+mint until a USDT/USD feed exists in the unisafe oracle (no-opinion → mint closed, burn works).
 
 ## Prior art (short)
 
