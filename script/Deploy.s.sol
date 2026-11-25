@@ -48,7 +48,7 @@ contract Deploy is Script {
 
     error WiringMismatch();
 
-    function run() external returns (Deployment memory d) {
+    function run() external virtual returns (Deployment memory d) {
         address owner = vm.envAddress("NOUSD_OWNER");
         Config memory cfg = loadConfig(block.chainid, owner);
         vm.startBroadcast();
