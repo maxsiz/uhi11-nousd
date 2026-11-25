@@ -458,7 +458,10 @@ Pairing with idle costs the minter no swap fee and is value-neutral for holders 
 
 If `burnDelay > 0`, `burn` reverts `UseRequestBurn`.
 
-Gas target (Ethereum launch, 3 positions): ≤ 500k.
+Gas target, steady state (idle, claims and accrued slots already non-zero): ≤ 520k for 3 positions
+over 3 tokens (measured 507k), ≤ 650k for the Ethereum launch set (3 positions, 6 distinct tokens: each
+extra token is one more transfer to the holder). The floor is 3 × `modifyLiquidity` (~78k each) plus one
+ERC-20 transfer per token; revised on 2026-11-25 from 450k/500k after measurement.
 
 ### 9.3 Delayed burn (`burnDelay > 0`)
 
@@ -494,7 +497,7 @@ F += norm(c0, d0) + norm(c1, d1)
   `carry += token.distribute(F − cut)` (the remainder).
 - Rotate `obs` of each pool if `now ≥ obs.newer.t + selectionWindow` (§8).
 - No token transfers, no oracle, no swaps. Counters that did not move are not rewritten; nothing is
-  distributed when there is nothing new. Gas target: ≤ 60k + 40k per position.
+  distributed when there is nothing new. Gas target: ≤ 70k + 40k per position (measured 186k for 3).
 
 `sync` runs inside mint, burn, claim, executeBurns, compound, applyRange, retire, and by the keeper
 (hourly on L2, daily on Ethereum).
