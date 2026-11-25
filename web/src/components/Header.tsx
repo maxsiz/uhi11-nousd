@@ -69,14 +69,15 @@ export function Header() {
                 {n.label}
               </Link>
             ) : (
-              <button
+              <a
                 key={n.label}
-                type="button"
-                onClick={() => app.showToast("Docs open in a new tab")}
-                className="whitespace-nowrap rounded-[10px] px-[13px] py-2 text-[14px] font-semibold text-tx2 hover:text-tx"
+                href="https://github.com/maxsiz/uhi11-nousd#readme"
+                target="_blank"
+                rel="noreferrer"
+                className="whitespace-nowrap rounded-[10px] px-[13px] py-2 text-[14px] font-semibold text-tx2 hover:text-tx hover:no-underline"
               >
                 {n.label}
-              </button>
+              </a>
             ),
           )}
         </nav>
