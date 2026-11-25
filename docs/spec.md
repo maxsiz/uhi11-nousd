@@ -66,9 +66,13 @@ External dependency: the **unisafe price guard** (`IPriceOracle`, implementation
 from the `uniswap-smart-wallet` repo), used only through its interface, by address (§7). Its ownership
 stays with its current owner; the registry can switch the address (loosening → timelock).
 
-Size: EIP-170 (24 576 B) applies. Keep the manager's heavy math in internal libraries; if it still does
-not fit, move cold paths (delayed burn queue, applyRange) to **external libraries** linked at deploy, not
-to a second stateful contract. Measure with `forge build --sizes` and keep ≥ 1 KB headroom.
+Size: EIP-170 (24 576 B) applies. The manager does not fit with everything inline, so its stateless or
+storage-pointer parts are **external libraries** linked at deploy (delegatecalled, so they act as the
+manager), not a second stateful contract: `PoolSelection` (§8), `PositionMath` (liquidity math, swap size,
+uncollected fees), `SwapStep` (the mint swap and its settlement, run inside the unlock callback) and
+`BurnQueue` (§9.3 bookkeeping). Registry reads go through one internal call site each (every external call
+returning a struct carries its own decoder), and the manager caches each position's `PoolKey`. Measure with
+`forge build --sizes` and keep ≥ 1 KB headroom.
 
 ---
 
@@ -257,6 +261,7 @@ function distribute(uint256 value) external returns (uint256 remainder);
 function consumeAccrued(address a) external returns (uint256 paid); // settle(a); paid = accrued[a] − 1
 function accrueTreasury(uint256 value) external;                    // protocol fee share
 function consumeTreasury() external returns (uint256 paid);         // paid = treasuryAccrued; zeroes it
+function pullToManager(address from, uint256 amount) external;     // delayed-burn escrow (§9.3)
 ```
 
 `consumeAccrued` settles `a`, takes `accrued[a] − 1` (0 if `accrued[a] ≤ 1`), decreases
@@ -339,7 +344,7 @@ The manager defines:
 
 ```
 _spotVouched(key)  := oracle.check(key, false, 0, 0) == true   // reverts propagate; false → OracleNoOpinion
-_atPar(key)        := |spotPrice(key) − 1| ≤ depegBps            // price of currency1 per currency0, normalized
+_atPar(key)        := |tick(key) − parTick(key)| ≤ depegBps      // in ticks: 1 tick ≈ 1 bp
 _pegOk(key)        := _spotVouched(key) && _atPar(key)
 ```
 
@@ -399,9 +404,11 @@ paused token blocks burn until it is unpaused; that is the token's property, not
    a. **Pair with idle.** From the add position's ratio at the current price (`LiquidityAmounts`),
       compute `need_u` — the amount of `u` that pairs with the whole deposit. Take
       `k = min(idle[u], need_u)` from `idle[u]`. If `k == need_u`, no swap.
-   b. Otherwise compute the swap amount `s` so that `amount − s` of `t` and `k + swapOut` of `u` fit
-      the ratio (`LiquidityAmounts` + one-step correction; leftover allowed) and `swap` in the swap pool
-      (exact input `s`, `sqrtPriceLimit` = depeg bound).
+   b. Otherwise swap in the swap pool, exact input, `sqrtPriceLimit` = `parTick ∓ depegBps`:
+      `s = (needU − k) / (q + ρ)` with `ρ = needU / amount` and `q` the pool's price of `t` net of its fee.
+      **Two passes, approaching from below:** in a ±1 % range the wanted ratio moves ~1 % per tick, so the
+      first pass swaps 90 % of `s`, the second recomputes `needU` at the new price and swaps what is still
+      missing. A pass is skipped when the price already sits at the depeg bound. Leftover is refunded.
    c. `modifyLiquidity` on the add pool, `liquidityDelta > 0`, `salt = 0`. Its `callerDelta` also
       contains this position's **fees** (v4 credits fees on any modify): those fee amounts go to `idle`
       (they were already accounted by `_sync` in step 2 — see §9.4).
@@ -439,11 +446,11 @@ Gas target (Ethereum launch, 3 positions): ≤ 500k.
 
 ### 9.3 Delayed burn (`burnDelay > 0`)
 
-- `requestBurn(uint256 x, address to, uint256 minOut) returns (uint256 id)`: transfers `x` noUSD from the
-  holder to the manager (settles the holder; their accrued stays claimable with `claim`; the escrow is
+- `requestBurn(uint256 x, address to, uint256 minOut) returns (uint256 id)`: moves `x` noUSD from the
+  holder to the manager with the manager-only `token.pullToManager` (no approval needed) (settles the holder; their accrued stays claimable with `claim`; the escrow is
   excluded and stops accruing); `escrowed += x`; pushes
   `{owner, to, x, readyAt = now + burnDelay, minOut}`.
-- `executeBurns(uint256 n)` (anyone): one `_sync()`, then processes up to `n` matured, not-done requests
+- `executeBurns(uint256 n)` (anyone): one `_sync()`, then visits up to `n` not-done requests
   FIFO from `queueHead`, each as §9.2 steps 2, 5, 6 with `a = 0`, burning from the escrow
   (`escrowed −= x`). **The fraction is computed at execution**, never at request. A request whose
   execution fails (`Slippage` or `PayoutFailed`) is **skipped** (event `BurnSkipped`) and stays pending;
@@ -491,7 +498,8 @@ Never delayed. Accrued does not compound.
 - `_sync()`. Requires the position's uncollected fees (from §9.4 math, at par) + its pair's `idle` ≥
   `compoundThreshold`, and `_atPar(key)`.
 - One unlock: `modifyLiquidity(0)` to collect, then add as much of `idle[c0], idle[c1]` as fits the
-  current ratio. No swap. Leftover stays in `idle` (and is later paired by mint, §9.1).
+  current ratio, keeping 1 wei of margin per side (owed amounts round up). No swap. Leftover stays in
+  `idle` (and is later paired by mint, §9.1). Only for Active pools.
 
 ### 9.7 `applyRange(PoolId id)` (anyone) — no automatic recenter
 
@@ -501,7 +509,8 @@ depeg; v1 does not do it. An out-of-range position is skipped by mint selection 
 to return, or governance retires the pool.
 
 A range is changed only by governance: a new preset in the registry (timelock), then `applyRange(id)`:
-- Conditions: pool `Active`; the position's range differs from the registry preset; `_pegOk(key)`.
+- Conditions: pool `Active`; the position exists and its range differs from the registry preset
+  (a position not created yet simply starts at the preset on the next mint); `_pegOk(key)`.
 - Action: `_sync()`; one unlock: remove all liquidity → `idle`; add as much as fits at the preset range;
   **no swap**; leftover stays in `idle`. `fgXAccounted` is initialized from `getFeeGrowthInside` of the
   new range.
@@ -629,8 +638,11 @@ Unit / fuzz:
 Invariants (handler-based):
 - Σ balances = `totalSupply`; Σ excluded balances = `excludedSupply`.
 - `totalUnclaimed` = Σ pendingAccrued over holders (± rounding).
-- With the pool price held fixed: value(body) ≥ totalSupply + totalUnclaimed + treasuryAccrued + carry − ε
-  (no value created). Price moves inside the range are tested separately (bounded drift).
+- No value created: with each position valued at the pool price of the last credit (seed or mint),
+  value(body) ≥ totalSupply + totalUnclaimed + treasuryAccrued + carry − ε, where ε covers liquidity
+  rounding (one unit of liquidity can be ~1e9 wei of an 18-decimal token next to a 6-decimal one).
+  Not "valued at par": at a fixed valuation price an LP position is worth *least* when the pool sits
+  exactly at that price, so any price move changes the measure (composition drift, §6).
 - No sequence of calls by a non-owner reduces another holder's withdrawable share except through fees
   and price movement inside range.
 
