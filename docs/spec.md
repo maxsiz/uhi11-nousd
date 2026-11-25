@@ -634,7 +634,8 @@ depend on it.
 - Layout: `src/NoUSD.sol`, `src/NoUSDPositionManager.sol`, `src/NoUSDRegistry.sol`, `src/lib/*`,
   `src/interfaces/*`, `test/`, `script/Deploy.s.sol` + `script/config/<chainId>.json`.
 - CI (GitHub Actions): `forge fmt --check` → `forge build --sizes` → `forge test -vvv`; fork tests
-  env-gated (`ETH_RPC`, `ARB_RPC`, …) and skipped without RPC.
+  env-gated by the RPC variables behind `foundry.toml` `[rpc_endpoints]` (`ENVELOP_MAINNET` for Ethereum,
+  `WEB3_QUICKNODE_ARB` / `_BASE` / `_UNI` for the L2s; kept in a git-ignored `.env`) and skipped without them.
 
 ## 14. Tests (acceptance)
 

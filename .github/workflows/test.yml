@@ -34,6 +34,6 @@ jobs:
       - name: Run Forge build
         run: forge build --sizes
 
-      # Fork tests read ETH_RPC / ARB_RPC / BASE_RPC / UNICHAIN_RPC and skip when they are unset.
+      # Fork tests read ENVELOP_MAINNET (and the L2 RPC variables of foundry.toml) and skip when unset.
       - name: Run Forge tests
         run: forge test -vvv

@@ -29,4 +29,5 @@ git submodule update --init --recursive
 forge fmt --check && forge build --sizes && forge test -vvv
 ```
 
-Fork tests are env-gated (`ETH_RPC`, `ARB_RPC`, `BASE_RPC`, `UNICHAIN_RPC`) and skip without RPC.
+Fork tests are env-gated by the variables behind `foundry.toml` `[rpc_endpoints]` (`ENVELOP_MAINNET` for
+Ethereum; L2 ones likewise) — forge reads them from the git-ignored `.env` — and skip without RPC.
