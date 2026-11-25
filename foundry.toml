@@ -23,3 +23,6 @@ runs = 1024
 
 [fmt]
 line_length = 120
+
+[lint]
+lint_on_build = false
