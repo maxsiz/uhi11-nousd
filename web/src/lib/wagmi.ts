@@ -18,11 +18,12 @@ const connectors = IS_DEMO
 export const wagmiConfig = createConfig({
   chains: [mainnet, unichain, arbitrum, base],
   connectors,
+  // Same-origin proxy (src/app/api/rpc): provider keys stay on the server, never in the bundle.
   transports: {
-    [mainnet.id]: http(),
-    [unichain.id]: http(),
-    [arbitrum.id]: http(),
-    [base.id]: http(),
+    [mainnet.id]: http(`/api/rpc/${mainnet.id}`),
+    [unichain.id]: http(`/api/rpc/${unichain.id}`),
+    [arbitrum.id]: http(`/api/rpc/${arbitrum.id}`),
+    [base.id]: http(`/api/rpc/${base.id}`),
   },
   ssr: true,
   // Collapse cross-hook reads into one Multicall3 call (stablelp-ui: avoids RPC 429s).
