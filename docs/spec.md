@@ -69,8 +69,10 @@ stays with its current owner; the registry can switch the address (loosening →
 Size: EIP-170 (24 576 B) applies. The manager does not fit with everything inline, so its stateless or
 storage-pointer parts are **external libraries** linked at deploy (delegatecalled, so they act as the
 manager), not a second stateful contract: `PoolSelection` (§8), `PositionMath` (liquidity math, swap size,
-uncollected fees), `SwapStep` (the mint swap and its settlement, run inside the unlock callback) and
-`BurnQueue` (§9.3 bookkeeping). Registry reads go through one internal call site each (every external call
+uncollected fees), `SwapStep` (the mint swap, run inside the unlock callback), `Settlement` (modify a
+position, pay out a fraction of the body, close each currency's delta) and `BurnQueue` (§9.3 bookkeeping).
+The idle book passed to `Settlement` uses plain addresses: solc 0.8.26 has an internal error on a public
+library function taking a storage array of a user-defined value type (`Currency[] storage`). Registry reads go through one internal call site each (every external call
 returning a struct carries its own decoder), and the manager caches each position's `PoolKey`. Measure with
 `forge build --sizes` and keep ≥ 1 KB headroom.
 
@@ -304,7 +306,7 @@ mapping(PoolId => Position) public positions;
 struct Obs { uint64 t; uint256 fg0; uint256 fg1; }   // feeGrowthGlobal points for selection
 mapping(PoolId => Obs[2]) public obs;                 // [older, newer], rotated by sync every selectionWindow
 
-mapping(Currency => uint256) public idle;            // manager-held tokens counted in the body
+Book book;  // idle[token] — held as the manager's ERC-6909 claims on the PoolManager —, scale, currencies
 uint256 public carry;                                // undistributed value (dust, mint fees)
 
 struct BurnRequest { address owner; address to; uint128 amount; uint64 readyAt; uint128 minOut; bool done; }
@@ -326,8 +328,21 @@ value(body) ≈ totalSupply + totalUnclaimed + treasuryAccrued + carry
 No function values the body with a price. Mint values what the minter actually added; burn and claim
 pay a **fraction** of every position and of idle; sync values fee amounts at par.
 
-When a position is first created (first add at its range), `fgXAccounted` is set to
-`getFeeGrowthInside` of that range in the same call.
+**Idle custody.** Idle is not an ERC-20 balance of the manager: it is the manager's ERC-6909 claims on the
+PoolManager (`mint`/`burn` of claims). Every unlock callback ends by closing each currency's delta: the
+payout goes from the PoolManager straight to the recipient (`take`), the rest is the change of idle,
+minted or burned as claims. So a payout is one ERC-20 transfer, collecting fees costs no transfer, and
+a mint deposit goes from the minter straight into the PoolManager. Custody risk is unchanged: all the
+liquidity is in the PoolManager anyway.
+
+**Position record.** `positions[id]` also caches the pool key and both decimals, so sync and payouts never
+ask the registry per pool.
+
+**Fee counters on (re)fill.** Whenever liquidity is added to a position that holds none — its creation,
+a refill after `retire`, or `applyRange` — `fgXAccounted` is set to `getFeeGrowthInside` **after** the
+add. Setting it before is wrong twice: if nobody else uses the range's ticks, v4 initializes them in this
+very add, which shifts `feeGrowthInside` (the next sync would count the pool's whole fee history, or
+underflow); and a refilled position would count the fees the pool earned while it was empty.
 
 ---
 
@@ -389,18 +404,19 @@ Pick the max score; ties → lower index. If no candidate: revert `NoPoolForToke
 ## 9. Manager functions
 
 All external entry points are `nonReentrant`. Functions taking `deadline` revert `Expired` if
-`block.timestamp > deadline`. Payouts in burn/claim are taken from the PoolManager into the manager and
-then transferred to `to`; a token transfer that fails reverts the whole call with
-`PayoutFailed(token, to)` — the caller should retry with another `to` (e.g. a blacklisted recipient). A
+`block.timestamp > deadline`. Payouts in burn/claim are taken from the PoolManager straight to `to`; v4 reverts a refused
+token transfer with `WrappedError(token, …)`, which the manager turns into `PayoutFailed(token, to)` — the
+caller should retry with another `to` (e.g. a blacklisted recipient). A
 paused token blocks burn until it is unpaused; that is the token's property, not the protocol's.
 
 ### 9.1 `mint(Currency token, uint256 amount, uint256 minOut, address to, uint256 deadline) returns (uint256 out)`
 
 1. Checks: deadline; not `mintPaused`; `tokens[token].mintable`; `amount > 0`.
 2. `_sync()` (§9.4) — accrual is up to date before the supply changes.
-3. Pull `amount` from `msg.sender` (`transferFrom`, SafeERC20).
+3. (Moved into the callback: `sync(t)`, `transferFrom(minter → PoolManager)`, `settle()`.)
 4. Select pools (§8). Let `u` be the other currency of the add pool.
-5. `poolManager.unlock(data)` → in the callback:
+5. `poolManager.unlock(data)` → in the callback (the deposit is pulled from the minter straight into the
+   PoolManager here, not in step 3; refunds are taken from the PoolManager to the minter at the end):
    a. **Pair with idle.** From the add position's ratio at the current price (`LiquidityAmounts`),
       compute `need_u` — the amount of `u` that pairs with the whole deposit. Take
       `k = min(idle[u], need_u)` from `idle[u]`. If `k == need_u`, no swap.
@@ -477,7 +493,8 @@ F += norm(c0, d0) + norm(c1, d1)
 - `cut = F × protocolFeeBps / 10 000` → `token.accrueTreasury(cut)`;
   `carry += token.distribute(F − cut)` (the remainder).
 - Rotate `obs` of each pool if `now ≥ obs.newer.t + selectionWindow` (§8).
-- No token transfers, no oracle, no swaps. Gas target: ≤ 60k + 40k per position.
+- No token transfers, no oracle, no swaps. Counters that did not move are not rewritten; nothing is
+  distributed when there is nothing new. Gas target: ≤ 60k + 40k per position.
 
 `sync` runs inside mint, burn, claim, executeBurns, compound, applyRange, retire, and by the keeper
 (hourly on L2, daily on Ethereum).
