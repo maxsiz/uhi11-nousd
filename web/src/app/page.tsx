@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { LiveDot, PairChips, Skeleton, TokenChip } from "@/components/ui";
+import { UnlockCycle } from "@/components/UnlockCycle";
 import { FAQ } from "@/lib/data/mock";
 import { duration, fmt } from "@/lib/format";
 import { basketByToken } from "@/lib/preview";
@@ -122,6 +123,8 @@ export default function Landing() {
           </div>
         ))}
       </section>
+
+      <UnlockCycle />
 
       <section id="how" className="flex scroll-mt-20 flex-col gap-[18px] pt-[72px]">
         <div className="flex flex-col gap-[6px]">
