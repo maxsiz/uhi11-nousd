@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {NoUSDPositionManager} from "../src/NoUSDPositionManager.sol";
 import {NoUSDRegistry} from "../src/NoUSDRegistry.sol";
 import {ManagerFixture} from "./utils/ManagerFixture.sol";
 
@@ -122,5 +123,14 @@ contract AuditRegressionsTest is ManagerFixture {
         }
         assertGe(mgr.idle(_c(tB)) + 1e6, idleB, "holders' idle B is not spent on the minter's fee");
         _assertSolvent();
+    }
+
+    /// @dev L-04: a request made while burnDelay was 0 matured at once and stayed an instant exit after the
+    /// delay was raised. Requests now need a delay; with none, burn is the path.
+    function test_L04_requestBurnNeedsDelay() public {
+        uint256 out = _mint(tA, 1_000, alice);
+        vm.prank(alice);
+        vm.expectRevert(NoUSDPositionManager.UseBurn.selector);
+        mgr.requestBurn(out, alice, 0);
     }
 }

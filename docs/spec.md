@@ -477,7 +477,9 @@ ERC-20 transfer per token; revised on 2026-11-25 from 450k/500k after measuremen
 
 ### 9.3 Delayed burn (`burnDelay > 0`)
 
-- `requestBurn(uint256 x, address to, uint256 minOut) returns (uint256 id)`: moves `x` noUSD from the
+- `requestBurn(uint256 x, address to, uint256 minOut) returns (uint256 id)`: reverts `UseBurn` while
+  `burnDelay == 0` (such a request would mature at once and stay an instant exit after the delay is
+  raised, audit 2026-11-26 L-04); otherwise moves `x` noUSD from the
   holder to the manager with the manager-only `token.pullToManager` (no approval needed) (settles the holder; their accrued stays claimable with `claim`; the escrow is
   excluded and stops accruing); `escrowed += x`; pushes
   `{owner, to, x, readyAt = now + burnDelay, minOut}`.

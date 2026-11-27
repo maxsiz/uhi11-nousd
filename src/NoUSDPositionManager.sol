@@ -123,6 +123,7 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
     error PegCheckFailed(PoolId id);
     error OracleNoOpinion(PoolId id);
     error UseRequestBurn();
+    error UseBurn();
     error NotMatured();
     error AlreadyDone();
     error NotRequestOwner();
@@ -246,9 +247,13 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
     function requestBurn(uint256 x, address to, uint256 minOut) external nonReentrant returns (uint256 id) {
         if (x == 0) revert ZeroAmount();
         if (to == address(0)) revert ZeroAddress();
+        // Without a delay, use burn: a request made now would mature at once and stay an instant exit after
+        // governance raises the delay (audit 2026-11-26 L-04).
+        uint256 delay = registry.coreParams().burnDelay;
+        if (delay == 0) revert UseBurn();
         token.pullToManager(msg.sender, x);
         escrowed += x;
-        id = BurnQueue.push(_burnQueue, msg.sender, to, x, minOut, registry.coreParams().burnDelay);
+        id = BurnQueue.push(_burnQueue, msg.sender, to, x, minOut, delay);
     }
 
     /// @notice Executes up to `n` matured requests FIFO from the queue head. A request that fails
