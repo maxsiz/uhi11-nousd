@@ -44,4 +44,29 @@ contract AuditRegressionsTest is ManagerFixture {
         // No solvency assert here: a 100k mint after a 1k one is short of the credit-price measure by
         // about $0.23 with any fee (L-01, the add at a skewed price), which is not what this test is about.
     }
+
+    /// @dev L-02: a mint that swaps in the pool it adds to raised feeGrowthInside with its own swap, and the
+    /// next sync multiplied that growth by the post-add liquidity: claims above the fees v4 actually paid.
+    function test_L02_mintOwnSwapFees_accruedOnlyOnce() public {
+        _seed(keyAB, 10_000, bob);
+        mgr.sync();
+        uint256 accruedBefore = _claims();
+        uint256 idleBefore = _idleAB();
+        _mint(tA, 200_000, alice); // no idle B: swaps A→B in AB and adds to AB
+        uint256 received = _idleAB() - idleBefore; // the add's modify collected the old liquidity's fees
+        assertGt(received, 0, "the mint's own swap paid fees");
+        mgr.sync();
+        assertApproxEqAbs(_claims() - accruedBefore, received, DUST, "claims grow by the fees received");
+        assertGe(_bodyValue() + DUST, _liabilities(), "no unbacked claims");
+    }
+
+    function _claims() internal view returns (uint256) {
+        return token.totalUnclaimed() + token.treasuryAccrued() + mgr.carry();
+    }
+
+    function _idleAB() internal view returns (uint256) {
+        return
+            mgr.idle(keyAB.currency0) * reg.scale(keyAB.currency0) + mgr.idle(keyAB.currency1)
+                * reg.scale(keyAB.currency1);
+    }
 }

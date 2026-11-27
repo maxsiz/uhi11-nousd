@@ -449,27 +449,7 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
             PoolId id = ids[i];
             Position storage pos = positions[id];
             uint128 liquidity = _liquidity(id, pos);
-            if (liquidity != 0) {
-                (uint256 fgi0, uint256 fgi1) = poolManager.getFeeGrowthInside(id, pos.tickLower, pos.tickUpper);
-                // Fee growth wraps like in v4; the difference is the growth since the last sync. Unchanged
-                // counters are not rewritten.
-                uint256 acc0 = pos.fg0Accounted;
-                if (fgi0 != acc0) {
-                    unchecked {
-                        value += FullMath.mulDiv(fgi0 - acc0, liquidity, FixedPoint128.Q128) * 10
-                        ** (18 - pos.decimals0);
-                    }
-                    pos.fg0Accounted = fgi0;
-                }
-                uint256 acc1 = pos.fg1Accounted;
-                if (fgi1 != acc1) {
-                    unchecked {
-                        value += FullMath.mulDiv(fgi1 - acc1, liquidity, FixedPoint128.Q128) * 10
-                        ** (18 - pos.decimals1);
-                    }
-                    pos.fg1Accounted = fgi1;
-                }
-            }
+            if (liquidity != 0) value += _accountFees(id, pos, liquidity);
             _rotateObs(id, window);
         }
         _distribute(value + carry, protocolFeeBps);
@@ -483,6 +463,27 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
         if (cut != 0) token.accrueTreasury(cut);
         carry = value == cut ? 0 : token.distribute(value - cut);
         emit Synced(value, cut);
+    }
+
+    /// @dev Value at par of the fees `liquidity` earned since the counters were last moved; moves them.
+    function _accountFees(PoolId id, Position storage pos, uint128 liquidity) internal returns (uint256 value) {
+        (uint256 fgi0, uint256 fgi1) = poolManager.getFeeGrowthInside(id, pos.tickLower, pos.tickUpper);
+        // Fee growth wraps like in v4; the difference is the growth since the last sync. Unchanged counters
+        // are not rewritten.
+        uint256 acc0 = pos.fg0Accounted;
+        if (fgi0 != acc0) {
+            unchecked {
+                value += FullMath.mulDiv(fgi0 - acc0, liquidity, FixedPoint128.Q128) * 10 ** (18 - pos.decimals0);
+            }
+            pos.fg0Accounted = fgi0;
+        }
+        uint256 acc1 = pos.fg1Accounted;
+        if (fgi1 != acc1) {
+            unchecked {
+                value += FullMath.mulDiv(fgi1 - acc1, liquidity, FixedPoint128.Q128) * 10 ** (18 - pos.decimals1);
+            }
+            pos.fg1Accounted = fgi1;
+        }
     }
 
     function _rotateObs(PoolId id, uint256 window) internal {
@@ -728,7 +729,12 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
     /// growth *after* the add: v4 initializes the range's ticks in this modify if nobody else uses them,
     /// which shifts feeGrowthInside, and an emptied position must not count fees from its empty period.
     function _add(PoolId id, Position storage pos, uint128 liquidity) internal returns (uint256 p0, uint256 p1) {
-        bool wasEmpty = _liquidity(id, pos) == 0;
+        uint128 before = _liquidity(id, pos);
+        bool wasEmpty = before == 0;
+        // Fees earned since the last sync (the mint's own swap, in the same transaction) belong to the old
+        // liquidity: account them now, or the next sync would multiply that growth by the larger liquidity
+        // and credit fees nobody earned (audit 2026-11-26 L-02). The modify sends them to idle.
+        if (!wasEmpty) carry += _accountFees(id, pos, before);
         (p0, p1) = Settlement.modify(poolManager, pos, int256(uint256(liquidity)));
         if (wasEmpty) {
             (pos.fg0Accounted, pos.fg1Accounted) = poolManager.getFeeGrowthInside(id, pos.tickLower, pos.tickUpper);

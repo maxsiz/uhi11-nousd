@@ -431,7 +431,10 @@ paused token blocks burn until it is unpaused; that is the token's property, not
       missing. A pass is skipped when the price already sits at the depeg bound. Leftover is refunded.
    c. `modifyLiquidity` on the add pool, `liquidityDelta > 0`, `salt = 0`. Its `callerDelta` also
       contains this position's **fees** (v4 credits fees on any modify): those fee amounts go to `idle`
-      (they were already accounted by `_sync` in step 2 — see §9.4).
+      (they were accounted by `_sync` in step 2 — see §9.4 — except the growth from this mint's own swap
+      in step b: before the add, that growth on the old liquidity is valued at par and added to `carry`,
+      and the fee counters move to the current growth; otherwise the next sync would multiply it by the
+      post-add liquidity, audit 2026-11-26 L-02).
    d. `_pegOk` on both pools; share cap of the add pool after the add.
    e. settle / take with `CurrencySettler` patterns; check `msg.sender == poolManager`.
 6. `added = value(L_added) − norm(k)` — only the minter's contribution (the idle `k` already belonged
