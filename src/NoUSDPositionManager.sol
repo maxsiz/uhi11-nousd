@@ -177,9 +177,10 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
 
         uint256 fee = r.value * p.mintFeeBps / 10_000;
         out = r.value - fee;
-        carry += fee;
         if (out < minOut) revert Slippage(out, minOut);
         if (token.totalSupply() + out > p.supplyCap) revert SupplyCapExceeded();
+        // The fee goes to the holders before the new balance exists, so the minter earns none of it back.
+        if (fee != 0) _distribute(carry + fee, p.protocolFeeBps);
         token.mint(to, out);
         emit Minted(msg.sender, to, t, amount, r.value, fee, out, addId, swapId);
     }
@@ -471,7 +472,12 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
             }
             _rotateObs(id, window);
         }
-        value += carry;
+        _distribute(value + carry, protocolFeeBps);
+    }
+
+    /// @dev Splits `value` into the protocol cut and the holders' accumulator; the rounding remainder is the
+    /// new `carry` (callers pass the old carry in `value`).
+    function _distribute(uint256 value, uint256 protocolFeeBps) internal {
         if (value == 0) return;
         uint256 cut = value * protocolFeeBps / 10_000;
         if (cut != 0) token.accrueTreasury(cut);

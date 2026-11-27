@@ -173,12 +173,13 @@ contract NoUSDPositionManagerMintTest is ManagerFixture {
     }
 
     function test_mint_feeGoesToHolders() public {
+        _mint(tA, 10_000, bob);
         _timelocked(abi.encodeCall(NoUSDRegistry.setMintFeeBps, (10)));
+        uint256 accBefore = token.pendingAccrued(bob);
         uint256 outA = _mint(tA, 10_000, alice);
-        uint256 carryBefore = mgr.carry();
-        assertApproxEqRel(carryBefore, outA / 999, 0.01e18, "0.1 % fee kept");
-        mgr.sync();
-        assertApproxEqRel(token.pendingAccrued(alice), carryBefore, 0.0001e18, "distributed to holders");
+        uint256 fee = outA / 999; // 0.1 % of the credited value
+        assertApproxEqRel(token.pendingAccrued(bob) - accBefore, fee, 0.01e18, "fee distributed at mint");
+        assertEq(token.pendingAccrued(alice), 0, "the minter earns none of her own fee");
         _assertSolvent();
     }
 

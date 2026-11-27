@@ -440,8 +440,11 @@ paused token blocks burn until it is unpaused; that is the token's property, not
    charged: crediting the paid amounts would create up to 1 wei of each token per mint (1e12 at par for a
    6-decimal token) and break `body ≥ liabilities`. Leftovers of the minter's tokens (in `t` or `u`) are refunded to
    `msg.sender`.
-7. `fee = added × mintFeeBps / 10 000`; `out = added − fee`; `carry += fee`.
-8. `require(out ≥ minOut)`; `require(totalSupply + out ≤ supplyCap)`; `token.mint(to, out)`.
+7. `fee = added × mintFeeBps / 10 000`; `out = added − fee`.
+8. `require(out ≥ minOut)`; `require(totalSupply + out ≤ supplyCap)`; if `fee > 0`, distribute
+   `carry + fee` now (protocol cut, then `token.distribute`, remainder back to `carry`), **before**
+   `token.mint(to, out)`. Left in `carry` until the next sync, the fee was spread over a supply that
+   already held the minter's new balance, and a large minter got most of it back (audit 2026-11-26 M-04).
 
 Reverts if the swap or the add is impossible (out of range, breaker, share cap, supply cap, slippage).
 Pairing with idle costs the minter no swap fee and is value-neutral for holders at par.
