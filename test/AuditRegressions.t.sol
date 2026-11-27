@@ -1,11 +1,48 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {NoUSDRegistry} from "../src/NoUSDRegistry.sol";
 import {ManagerFixture} from "./utils/ManagerFixture.sol";
 
 /// @dev A contract holder: excluded from accrual by default (spec §5.3).
 contract ContractHolder {}
+
+/// @dev StableToken's storage layout plus a Tether-style transfer fee: min(value × bps / 10 000, max), kept by
+/// `feeSink`. Etched over a fixture token to model USDT switching its fee on.
+contract FeeStableToken is ERC20 {
+    uint8 internal immutable _dec;
+    mapping(address => bool) public blocked; // StableToken's slot
+    uint256 public basisPointsRate;
+    uint256 public maximumFee;
+    address public feeSink;
+
+    constructor(string memory n, uint8 dec) ERC20(n, n) {
+        _dec = dec;
+    }
+
+    function decimals() public view override returns (uint8) {
+        return _dec;
+    }
+
+    function mint(address to, uint256 v) external {
+        _mint(to, v);
+    }
+
+    function setFee(uint256 bps, uint256 maxFee, address sink) external {
+        basisPointsRate = bps;
+        maximumFee = maxFee;
+        feeSink = sink;
+    }
+
+    function _update(address from, address to, uint256 v) internal override {
+        if (from == address(0) || to == address(0) || basisPointsRate == 0) return super._update(from, to, v);
+        uint256 fee = v * basisPointsRate / 10_000;
+        if (fee > maximumFee) fee = maximumFee;
+        super._update(from, to, v - fee);
+        if (fee != 0) super._update(from, feeSink, fee);
+    }
+}
 
 /// @notice Regression tests for the findings of the 2026-11-26 economic audit
 /// (docs/audits/2026-11-26-economic-audit.md), each named after its finding id.
@@ -68,5 +105,22 @@ contract AuditRegressionsTest is ManagerFixture {
         return
             mgr.idle(keyAB.currency0) * reg.scale(keyAB.currency0) + mgr.idle(keyAB.currency1)
                 * reg.scale(keyAB.currency1);
+    }
+
+    /// @dev L-07: with a transfer fee on the deposit token, mint credited the requested amount although
+    /// settle() received less; the shortfall came out of holders' idle claims of that token.
+    function test_L07_feeOnTransferDeposit_creditsWhatArrived() public {
+        _seed(keyAB, 50_000, bob);
+        _seed(keyBC, 20_000, bob);
+        reg.retirePool(idBC); // holders' B now sits idle
+        _markCredit();
+        uint256 idleB = mgr.idle(_c(tB));
+        vm.etch(address(tB), address(new FeeStableToken("B", 6)).code);
+        FeeStableToken(address(tB)).setFee(19, 49e6, makeAddr("tetherOwner")); // Tether's hard caps
+        for (uint256 i; i < 5; ++i) {
+            _mint(tB, 10_000, alice);
+        }
+        assertGe(mgr.idle(_c(tB)) + 1e6, idleB, "holders' idle B is not spent on the minter's fee");
+        _assertSolvent();
     }
 }

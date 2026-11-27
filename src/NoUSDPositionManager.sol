@@ -590,9 +590,11 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
         Position storage pos = _ensurePosition(addId, cfg);
 
         // The deposit goes straight from the minter into the PoolManager (credit to the manager).
+        // Credit what arrived, not what was asked: a token that starts charging a transfer fee (USDT can)
+        // would otherwise take the difference out of holders' idle (audit 2026-11-26 L-07).
         poolManager.sync(t);
         IERC20(Currency.unwrap(t)).safeTransferFrom(minter, address(poolManager), amount);
-        poolManager.settle();
+        amount = poolManager.settle();
 
         MintState memory m;
         m.tIs0 = Currency.unwrap(cfg.key.currency0) == Currency.unwrap(t);

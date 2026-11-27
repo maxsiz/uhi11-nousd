@@ -420,7 +420,9 @@ paused token blocks burn until it is unpaused; that is the token's property, not
 3. (Moved into the callback: `sync(t)`, `transferFrom(minter → PoolManager)`, `settle()`.)
 4. Select pools (§8). Let `u` be the other currency of the add pool.
 5. `poolManager.unlock(data)` → in the callback (the deposit is pulled from the minter straight into the
-   PoolManager here, not in step 3; refunds are taken from the PoolManager to the minter at the end):
+   PoolManager here, not in step 3; refunds are taken from the PoolManager to the minter at the end;
+   the deposit is the amount `settle()` returns, not the requested `amount`, so a token that turns on a
+   transfer fee cannot charge it to holders' idle — audit 2026-11-26 L-07):
    a. **Pair with idle.** From the add position's ratio at the current price (`LiquidityAmounts`),
       compute `need_u` — the amount of `u` that pairs with the whole deposit. Take
       `k = min(idle[u], need_u)` from `idle[u]`. If `k == need_u`, no swap.
