@@ -8,20 +8,34 @@ Internal multi-agent review of `uhi11-nousd` at commit `7e3bff9` (branch `main`)
 
 | ID | Finding | Severity after review | Verification | Category | Status |
 |---|---|---|---|---|---|
-| H-01 | `accPerShare` (uint120) overflows when eligible supply is about 1 wei. After that `_sync` breaks permanently, and with it burn, claim and mint | **High** | Confirmed by PoC | emission | Open |
-| M-01 | `_sync` values fee growth at par with no peg check: `donate()` of a depegged token creates claims that are paid out in healthy stables | **Medium** | Confirmed by skeptic's E2E PoC | uniswap | Open |
-| M-02 | Par arbitrage: the real depeg bound is ≈ `depegBps` + `maxSpotDeviationBps` (about 100 bps), not 50 | **Medium** | Confirmed by PoC | economic | Open |
-| M-03 | A free flash loan of noUSD before `sync()` captures B/(E+B) of accrued fees | **Medium** | Confirmed by PoC | economic | Open |
-| M-04 | The minter gets the mint fee back through `carry`, so the `mintFeeBps` lever does not work | **Medium** | Confirmed by PoC | economic | Open |
-| L-01 | Liquidity is added at a price skewed by up to `depegBps`: about 6.3 bps of every add goes to a backrunner | Low (up to Medium as `supplyCap` grows) | Confirmed by PoC | uniswap | Open |
-| L-02 | Fees from the mint's own swap are accounted on the post-add liquidity: phantom accruals appear | Low | Confirmed by PoC | emission | Open |
-| L-03 | `maxShareBps` bypass via flash JIT liquidity | Low | Confirmed by PoC | uniswap | Open |
-| L-04 | A matured burn request bypasses a `burnDelay` raised later | Low | Confirmed by PoC (with corrections) | economic | Open |
-| L-05 | `executeBurns` stalls on junk requests, `queueHead` is pinned | Low | Confirmed by PoC | other | Open |
-| L-06 | Sandwich of a victim's mint: the internal swap is bounded only by a minOut computed at par | Low | Confirmed by PoC (one skeptic: not an issue) | uniswap | Open |
-| L-07 | Mint credits the requested `amount`, not what arrived in `settle()` (if USDT enables its fee) | Low (conditional) | Confirmed by PoC (one skeptic: by design) | emission | Open |
+| H-01 | `accPerShare` (uint120) overflows when eligible supply is about 1 wei. After that `_sync` breaks permanently, and with it burn, claim and mint | **High** | Confirmed by PoC | emission | Fixed in `bbc2292` |
+| M-01 | `_sync` values fee growth at par with no peg check: `donate()` of a depegged token creates claims that are paid out in healthy stables | **Medium** | Confirmed by skeptic's E2E PoC | uniswap | Open (owner decision) |
+| M-02 | Par arbitrage: the real depeg bound is ≈ `depegBps` + `maxSpotDeviationBps` (about 100 bps), not 50 | **Medium** | Confirmed by PoC | economic | Open (owner decision) |
+| M-03 | A free flash loan of noUSD before `sync()` captures B/(E+B) of accrued fees | **Medium** | Confirmed by PoC | economic | Open (owner decision) |
+| M-04 | The minter gets the mint fee back through `carry`, so the `mintFeeBps` lever does not work | **Medium** | Confirmed by PoC | economic | Fixed in `b41e7eb` |
+| L-01 | Liquidity is added at a price skewed by up to `depegBps`: about 6.3 bps of every add goes to a backrunner | Low (up to Medium as `supplyCap` grows) | Confirmed by PoC | uniswap | Open (owner decision) |
+| L-02 | Fees from the mint's own swap are accounted on the post-add liquidity: phantom accruals appear | Low | Confirmed by PoC | emission | Fixed in `8eaded9` |
+| L-03 | `maxShareBps` bypass via flash JIT liquidity | Low | Confirmed by PoC | uniswap | Open (owner decision) |
+| L-04 | A matured burn request bypasses a `burnDelay` raised later | Low | Confirmed by PoC (with corrections) | economic | Fixed in `b0aceb5` |
+| L-05 | `executeBurns` stalls on junk requests, `queueHead` is pinned | Low | Confirmed by PoC | other | Open (owner decision) |
+| L-06 | Sandwich of a victim's mint: the internal swap is bounded only by a minOut computed at par | Low | Confirmed by PoC (one skeptic: not an issue) | uniswap | Open (owner decision) |
+| L-07 | Mint credits the requested `amount`, not what arrived in `settle()` (if USDT enables its fee) | Low (conditional) | Confirmed by PoC (one skeptic: by design) | emission | Fixed in `5f04f2b` |
 
 M-02, M-04 and L-04 lead to one systemic conclusion. Spec §11 relies on two levers against par arbitrage, `mintFeeBps` and `burnDelay`. M-04 disables the first and L-04 partly bypasses the second. As a result governance has no working response to M-02.
+
+
+## Fix status (2026-11-27)
+
+| ID | Status | Change |
+|---|---|---|
+| H-01 | Fixed `bbc2292` | `distribute` never reverts: value over eligible supply below `MIN_ELIGIBLE` (1 noUSD) goes to `treasuryAccrued`, and the uint120 bound is a non-reverting backstop (spec §5.2). |
+| M-04 | Fixed `b41e7eb` | The mint fee is distributed (`carry + fee`, protocol cut included) before `token.mint`, so the minter's new balance earns none of it (spec §9.1 step 8). |
+| L-02 | Fixed `8eaded9` | `_add` books the old liquidity's fee growth into `carry` and moves the counters before adding (spec §9.1 c). |
+| L-07 | Fixed `5f04f2b` | The deposit is the amount `settle()` returns (spec §9.1 step 5). |
+| L-04 | Fixed `b0aceb5` | `requestBurn` reverts `UseBurn` while `burnDelay == 0` (spec §9.3). |
+| M-01, M-02, M-03, L-01, L-03, L-05, L-06 | Open | Each fix changes economic behaviour the spec defines (peg check in `sync`, reference to $1 in the mint band, time-weighted accrual, add gate, share-cap reference, queue keeper rules, swap price check). They wait for the owner's decision. |
+
+Every fixed finding has a regression test in `test/AuditRegressions.t.sol` that fails on the audited commit and passes after the fix. One side observation from the M-04 test: a 100k mint right after a 1k one leaves the body about $0.23 short of the credit-price measure with any fee; that is the L-01 effect (add at a price skewed within the band).
 
 ---
 
@@ -59,7 +73,7 @@ After 50k noUSD is transferred to an EOA and normal trading happens, `sync` and 
 - `script/Deploy.s.sol`: create a non-withdrawable eligible seed (1 noUSD to a dead address marked eligible).
 - `src/NoUSDPositionManager.sol:444-480`: wrap `distribute` in try/catch so that burn and claim keep working even if sync fails.
 
-**Status:** Open
+**Status:** Fixed in `bbc2292`; regression test `test_H01_*` in `test/AuditRegressions.t.sol`.
 
 ---
 
@@ -93,7 +107,7 @@ The round-trip swap costs about $0.75. Without the conditions s ≈ 1 and m ≈ 
 
 **Fix.** In `src/NoUSDPositionManager.sol:444-480` (`_sync`), add a per-pool peg/oracle check that does not revert. If the check fails, do not advance `fg*Accounted` (fees stay in the body as surplus), or value them at `min(1, oracle price)`. Also cap the value a single sync can distribute per pool.
 
-**Status:** Open
+**Status:** Open — the fix changes economic behaviour beyond the spec and waits for the owner's decision.
 
 ---
 
@@ -129,7 +143,7 @@ Verified that a plain mint at −95 reverts. After the push everything goes thro
 - Do not launch with the combination `mintFeeBps = 0` and `burnDelay = 0`.
 - Fix `docs/spec.md:571`.
 
-**Status:** Open
+**Status:** Open — the fix changes economic behaviour beyond the spec and waits for the owner's decision.
 
 ---
 
@@ -165,7 +179,7 @@ The attacker, with no capital, got 49.7% of the distribution; `claim` paid out 5
 
 Partial measure: in `src/NoUSDPositionManager.sol:191-194`, forbid `sync` while the PoolManager is unlocked (`exttload`). Remove the swap-fee-based bound from the spec.
 
-**Status:** Open
+**Status:** Open — the fix changes economic behaviour beyond the spec and waits for the owner's decision.
 
 ---
 
@@ -189,7 +203,7 @@ Effective fee: 14.3 bps instead of 50. If bob is excluded, it is 0.
 
 **Fix.** `src/NoUSDPositionManager.sol:178-183`: call `token.distribute(carry + fee)` before `token.mint(to, out)`, so that the new balance is checkpointed after the distribution. Alternatively send the mint fee to the treasury or to a vesting bucket.
 
-**Status:** Open
+**Status:** Fixed in `b41e7eb`; regression test `test_M04_*` in `test/AuditRegressions.t.sol`.
 
 ---
 
@@ -217,7 +231,7 @@ Effective fee: 14.3 bps instead of 50. If bob is excluded, it is 0.
 
 **Fix.** In `src/NoUSDPositionManager.sol:303` (compound), `:321` (applyRange) and `:613-616` (mint post-add), add a narrow gate for adds, 2–5 ticks, or `oracle.checkOp` with the position's range. Credit at `min(V(L,spot), V(L,par))` in `:639`. Or keep `mintFeeBps ≥ ε²/4w` (about 7 bps) or a non-zero `burnDelay` until `supplyCap` is raised.
 
-**Status:** Open
+**Status:** Open — the fix changes economic behaviour beyond the spec and waits for the owner's decision.
 
 ---
 
@@ -242,7 +256,7 @@ The excess matches `L_add·Δ` to within 1 wei. The existing invariant tests do 
 
 **Fix.** `src/NoUSDPositionManager.sol:724-730` (`_add`): for a non-empty position, read `getFeeGrowthInside` before the modify, credit `(fgi − fgAccounted)·L_old` to `carry`, and set `fgAccounted = fgi`. Alternatively run a per-position sync right after the swap at `:608`.
 
-**Status:** Open
+**Status:** Fixed in `8eaded9`; regression test `test_L02_*` in `test/AuditRegressions.t.sol`.
 
 ---
 
@@ -268,7 +282,7 @@ An honest 2M mint reverts with `CapExceeded`. Through JIT the same mint goes thr
 
 **Fix.** In `src/NoUSDPositionManager.sol:617-619` and `src/lib/PoolSelection.sol:97`, use `min(L recorded at the last sync, current L)`, or add an absolute per-pool cap in the registry.
 
-**Status:** Open
+**Status:** Open — the fix changes economic behaviour beyond the spec and waits for the owner's decision.
 
 ---
 
@@ -297,7 +311,7 @@ In addition, once the trigger is reachable, anyone can execute the request and t
 
 **Fix.** In `src/NoUSDPositionManager.sol:504`, use the effective `readyAt = max(stored, requestedAt + current burnDelay)`. Give requests an expiry, or a cooldown on cancel (`src/lib/BurnQueue.sol:33-40`). Reject `requestBurn` when `burnDelay == 0` (`src/NoUSDPositionManager.sol:245`).
 
-**Status:** Open
+**Status:** Fixed in `b0aceb5`; regression test `test_L04_*` in `test/AuditRegressions.t.sol`.
 
 ---
 
@@ -318,7 +332,7 @@ In addition, once the trigger is reachable, anyone can execute the request and t
 
 **Fix.** A separate scan cursor in addition to `queueHead`. A minimum request size (e.g. 1 noUSD) in `src/NoUSDPositionManager.sol:245`. A public cancel that refunds the owner for requests not executed for longer than X.
 
-**Status:** Open
+**Status:** Open — the fix changes economic behaviour beyond the spec and waits for the owner's decision.
 
 ---
 
@@ -340,7 +354,7 @@ In addition, once the trigger is reachable, anyone can execute the request and t
 
 **Fix.** Check the actual swap rate via `oracle.check(key, zeroForOne, paid, got)` in `src/NoUSDPositionManager.sol:602-608`, or give the caller their own price limit. In the UI, set a tight minOut and submit through a private mempool.
 
-**Status:** Open
+**Status:** Open — the fix changes economic behaviour beyond the spec and waits for the owner's decision.
 
 ---
 
@@ -362,7 +376,7 @@ Once idle runs out, mint reverts (`test_feeOnTransfer_noIdle_reverts`).
 
 **Fix.** In `src/NoUSDPositionManager.sol:588,598`, use the value returned by `poolManager.settle()` as the deposit, or revert when `settled != amount`.
 
-**Status:** Open
+**Status:** Fixed in `5f04f2b`; regression test `test_L07_*` in `test/AuditRegressions.t.sol`.
 
 ---
 
