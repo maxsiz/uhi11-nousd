@@ -158,9 +158,9 @@ contract NoUSDTest is Test {
     }
 
     function test_distribute_remainderCarried() public {
-        token.mint(alice, 3);
-        token.mint(bob, 4);
-        // eligible = 7 wei: 10e18 / 7 leaves a remainder.
+        token.mint(alice, 3e18);
+        token.mint(bob, 4e18);
+        // eligible = 7e18: 10 wei spread over it leaves a remainder.
         uint256 value = 10;
         uint256 remainder = token.distribute(value);
         uint256 distributed = token.totalUnclaimed();
@@ -176,10 +176,25 @@ contract NoUSDTest is Test {
         assertEq(token.accPerShare(), 0);
     }
 
-    function test_distribute_overflowReverts() public {
+    /// @dev Audit 2026-11-26 H-01: a few wei of eligible supply must not push accPerShare past uint120 (which
+    /// used to revert and freeze sync, burn and claim); below MIN_ELIGIBLE the value goes to the treasury.
+    function test_distribute_tinyEligible_toTreasury_neverReverts() public {
         token.mint(alice, 1);
-        vm.expectRevert(NoUSD.AccumulatorOverflow.selector);
-        token.distribute(2e18);
+        assertEq(token.distribute(2e18), 0);
+        assertEq(token.treasuryAccrued(), 2e18);
+        assertEq(token.accPerShare(), 0);
+        token.mint(bob, 1e18);
+        token.distribute(1e18);
+        assertEq(token.accPerShare(), uint256(1e36) / (1e18 + 1));
+    }
+
+    function test_distribute_accumulatorBackstop_toTreasury() public {
+        token.mint(alice, 1e18);
+        // 2^120 / 1e18 value units per noUSD would overflow; the backstop takes it instead of reverting.
+        uint256 huge = uint256(type(uint120).max) + 1;
+        assertEq(token.distribute(huge), 0);
+        assertEq(token.treasuryAccrued(), huge);
+        assertEq(token.accPerShare(), 0);
     }
 
     function test_newHolder_earnsOnlyAfterEntry() public {
@@ -305,12 +320,11 @@ contract NoUSDTest is Test {
     // ───────────── fuzz ─────────────
 
     function testFuzz_distributionConservesValue(uint96 a, uint96 b, uint96 c, uint96 value) public {
-        vm.assume(uint256(a) + b + c > 0);
+        vm.assume(uint256(a) + b + c >= token.MIN_ELIGIBLE()); // below it the value goes to the treasury
         token.mint(alice, a);
         token.mint(bob, b);
         token.mint(carol, c);
         uint256 remainder;
-        // Bound value so accPerShare fits in uint120 for tiny supplies.
         uint256 v = bound(value, 0, (uint256(a) + b + c) * 1e18);
         remainder = token.distribute(v);
         uint256 sumPending = token.pendingAccrued(alice) + token.pendingAccrued(bob) + token.pendingAccrued(carol);

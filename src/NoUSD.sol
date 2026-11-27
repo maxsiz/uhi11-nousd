@@ -33,6 +33,9 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors, IERC20Permit, IERC3009, 
 
     /// @notice Scale of `accPerShare`: value (18 decimals) per 1e18 noUSD, times ACC_SCALE.
     uint256 public constant ACC_SCALE = 1e18;
+    /// @notice Below this eligible supply a distribution goes to the treasury instead of the accumulator:
+    /// spreading value over a few wei of supply would push `accPerShare` past uint120 and brick `sync`.
+    uint256 public constant MIN_ELIGIBLE = 1e18;
 
     uint8 internal constant EXCLUDED = 1; // does not accrue, balance counted in excludedSupply
     uint8 internal constant CLASSIFIED = 2; // EOA/contract classification done
@@ -78,7 +81,6 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors, IERC20Permit, IERC3009, 
     error NotManager();
     error ZeroAddress();
     error BalanceOverflow();
-    error AccumulatorOverflow();
     error ERC2612ExpiredSignature(uint256 deadline);
     error ERC2612InvalidSigner();
 
@@ -295,14 +297,16 @@ contract NoUSD is IERC20, IERC20Metadata, IERC20Errors, IERC20Permit, IERC3009, 
     function distribute(uint256 value) external onlyManager returns (uint256 remainder) {
         if (value == 0) return 0;
         uint256 eligible = totalSupply - excludedSupply;
-        if (eligible == 0) {
+        uint256 delta = eligible < MIN_ELIGIBLE ? 0 : value * ACC_SCALE / eligible;
+        uint256 acc = accPerShare + delta;
+        // Never revert: sync runs first in burn and claim, so a reverting distribute would freeze exits.
+        // With eligible ≥ 1e18, delta ≤ value and uint120 holds 1.3e18 value units per noUSD, so the
+        // overflow branch is a backstop only.
+        if (eligible < MIN_ELIGIBLE || acc > type(uint120).max) {
             treasuryAccrued += value;
             emit Distributed(value, 0, accPerShare);
             return 0;
         }
-        uint256 delta = value * ACC_SCALE / eligible;
-        uint256 acc = accPerShare + delta;
-        if (acc > type(uint120).max) revert AccumulatorOverflow();
         accPerShare = acc;
         // Rounded up: holders' settled earnings are floored per holder over spans that may cover several
         // distributions, so flooring here too could leave totalUnclaimed below their sum and make a later

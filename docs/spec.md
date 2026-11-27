@@ -216,7 +216,9 @@ address public immutable manager;
 - `accPerShare` grows only in `distribute(uint256 value) returns (uint256 remainder)` (onlyManager,
   called by `sync`):
   - `eligible = totalSupply − excludedSupply`;
-  - if `eligible == 0`: `treasuryAccrued += value`, `remainder = 0`;
+  - if `eligible < MIN_ELIGIBLE` (1e18, one noUSD): `treasuryAccrued += value`, `remainder = 0`. A few wei
+    of eligible supply would otherwise turn a dollar of fees into a delta past uint120 (audit 2026-11-26
+    H-01);
   - else `delta = value × ACC_SCALE / eligible` (round down); `accPerShare += delta`;
     `distributed = delta × eligible / ACC_SCALE` (**round up**: holders settle with a floor over spans
     that may cover several distributions, so a floored total could fall below their sum and make a
@@ -225,7 +227,9 @@ address public immutable manager;
     `remainder = value − distributed`. The manager adds `remainder` to `carry` (§6), so dust is
     distributed by a later `sync`.
 - `checkpoint` is stored as `uint120`. `accPerShare` MUST fit: with ACC_SCALE = 1e18, 2^120 ≈ 1.3e36
-  allows 1.3e18 value units per 1e18 noUSD — unreachable. Revert in `distribute` if exceeded.
+  allows 1.3e18 value units per 1e18 noUSD — unreachable once `eligible ≥ MIN_ELIGIBLE`. `distribute` never
+  reverts (sync runs first in burn and claim): if the sum would still exceed uint120, the value goes to
+  `treasuryAccrued` as above.
 - **Settle** an account (`_settle(a)`), used on every balance change and on `claim`:
   ```
   if (!excluded(a)) accrued[a] += balance(a) × (accPerShare − checkpoint(a)) / ACC_SCALE
