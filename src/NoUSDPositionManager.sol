@@ -180,8 +180,10 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
         out = r.value - fee;
         if (out < minOut) revert Slippage(out, minOut);
         if (token.totalSupply() + out > p.supplyCap) revert SupplyCapExceeded();
-        // The fee goes to the holders before the new balance exists, so the minter earns none of it back.
-        if (fee != 0) _distribute(carry + fee, p.protocolFeeBps);
+        // The fee, and the fees of this mint's own swap that _add booked into carry, go to the holders before
+        // the new balance exists, so the minter earns none of them back.
+        uint256 pending = carry + fee;
+        if (pending != 0) _distribute(pending, p.protocolFeeBps);
         token.mint(to, out);
         emit Minted(msg.sender, to, t, amount, r.value, fee, out, addId, swapId);
     }
@@ -732,8 +734,9 @@ contract NoUSDPositionManager is INoUSDPositionManager, IUnlockCallback, Reentra
         _book.currencies.push(Currency.unwrap(c));
     }
 
-    /// @dev Adds liquidity. When the position held none, the fee counters are (re)based on the range's fee
-    /// growth *after* the add: v4 initializes the range's ticks in this modify if nobody else uses them,
+    /// @dev Adds liquidity. When the position already held some, the fees it earned since the counters last
+    /// moved are booked into carry first. When it held none, the fee counters are (re)based on the range's
+    /// fee growth *after* the add: v4 initializes the range's ticks in this modify if nobody else uses them,
     /// which shifts feeGrowthInside, and an emptied position must not count fees from its empty period.
     function _add(PoolId id, Position storage pos, uint128 liquidity) internal returns (uint256 p0, uint256 p1) {
         uint128 before = _liquidity(id, pos);

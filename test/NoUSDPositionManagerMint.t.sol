@@ -299,10 +299,12 @@ contract NoUSDPositionManagerMintTest is ManagerFixture {
         _enableDelay();
         vm.prank(alice);
         mgr.requestBurn(outA, alice, 0);
+        uint256 bobBefore = token.pendingAccrued(bob);
+        uint256 unclaimedBefore = token.totalUnclaimed();
         _churn(keyAB, 50_000, 5);
         mgr.sync();
         // Bob is the only eligible holder; the escrow (manager, a contract) is excluded.
-        assertApproxEqAbs(token.pendingAccrued(bob), token.totalUnclaimed(), 10);
+        assertApproxEqAbs(token.pendingAccrued(bob) - bobBefore, token.totalUnclaimed() - unclaimedBefore, 10);
         assertEq(token.pendingAccrued(address(mgr)), 0);
     }
 
