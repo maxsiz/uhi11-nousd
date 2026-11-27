@@ -12,11 +12,11 @@ Internal multi-agent review of `uhi11-nousd` at commit `7e3bff9` (branch `main`)
 | M-01 | `_sync` values fee growth at par with no peg check: `donate()` of a depegged token creates claims that are paid out in healthy stables | **Medium** | Confirmed by skeptic's E2E PoC | uniswap | Open (owner decision) |
 | M-02 | Par arbitrage: the real depeg bound is ≈ `depegBps` + `maxSpotDeviationBps` (about 100 bps), not 50 | **Medium** | Confirmed by PoC | economic | Open (owner decision) |
 | M-03 | A free flash loan of noUSD before `sync()` captures B/(E+B) of accrued fees | **Medium** | Confirmed by PoC | economic | Open (owner decision) |
-| M-04 | The minter gets the mint fee back through `carry`, so the `mintFeeBps` lever does not work | **Medium** | Confirmed by PoC | economic | Fixed in `b41e7eb` |
+| M-04 | The minter gets the mint fee back through `carry`, so the `mintFeeBps` lever does not work | **Medium** | Confirmed by PoC | economic | Partially mitigated in `b41e7eb` (chunked mints: re-audit N-01) |
 | L-01 | Liquidity is added at a price skewed by up to `depegBps`: about 6.3 bps of every add goes to a backrunner | Low (up to Medium as `supplyCap` grows) | Confirmed by PoC | uniswap | Open (owner decision) |
 | L-02 | Fees from the mint's own swap are accounted on the post-add liquidity: phantom accruals appear | Low | Confirmed by PoC | emission | Fixed in `8eaded9` |
 | L-03 | `maxShareBps` bypass via flash JIT liquidity | Low | Confirmed by PoC | uniswap | Open (owner decision) |
-| L-04 | A matured burn request bypasses a `burnDelay` raised later | Low | Confirmed by PoC (with corrections) | economic | Fixed in `b0aceb5` |
+| L-04 | A matured burn request bypasses a `burnDelay` raised later | Low | Confirmed by PoC (with corrections) | economic | Partially mitigated in `b0aceb5` (only `burnDelay == 0`: re-audit N-03) |
 | L-05 | `executeBurns` stalls on junk requests, `queueHead` is pinned | Low | Confirmed by PoC | other | Open (owner decision) |
 | L-06 | Sandwich of a victim's mint: the internal swap is bounded only by a minOut computed at par | Low | Confirmed by PoC (one skeptic: not an issue) | uniswap | Open (owner decision) |
 | L-07 | Mint credits the requested `amount`, not what arrived in `settle()` (if USDT enables its fee) | Low (conditional) | Confirmed by PoC (one skeptic: by design) | emission | Fixed in `5f04f2b` |
@@ -24,15 +24,15 @@ Internal multi-agent review of `uhi11-nousd` at commit `7e3bff9` (branch `main`)
 M-02, M-04 and L-04 lead to one systemic conclusion. Spec §11 relies on two levers against par arbitrage, `mintFeeBps` and `burnDelay`. M-04 disables the first and L-04 partly bypasses the second. As a result governance has no working response to M-02.
 
 
-## Fix status (2026-11-27)
+## Fix status (2026-11-27, corrected after the [re-audit](2026-11-27-reaudit.md))
 
 | ID | Status | Change |
 |---|---|---|
 | H-01 | Fixed `bbc2292` | `distribute` never reverts: value over eligible supply below `MIN_ELIGIBLE` (1 noUSD) goes to `treasuryAccrued`, and the uint120 bound is a non-reverting backstop (spec §5.2). |
-| M-04 | Fixed `b41e7eb` | The mint fee is distributed (`carry + fee`, protocol cut included) before `token.mint`, so the minter's new balance earns none of it (spec §9.1 step 8). |
+| M-04 | Partial `b41e7eb` | The mint fee is distributed (`carry + fee`, protocol cut included) before `token.mint`, so a single mint earns none of it back (spec §9.1 step 8). Chunked mints still recover most of it (re-audit N-01). |
 | L-02 | Fixed `8eaded9` | `_add` books the old liquidity's fee growth into `carry` and moves the counters before adding (spec §9.1 c). |
 | L-07 | Fixed `5f04f2b` | The deposit is the amount `settle()` returns (spec §9.1 step 5). |
-| L-04 | Fixed `b0aceb5` | `requestBurn` reverts `UseBurn` while `burnDelay == 0` (spec §9.3). |
+| L-04 | Partial `b0aceb5` | `requestBurn` reverts `UseBurn` while `burnDelay == 0` (spec §9.3). Requests made under a positive delay still never expire (re-audit N-03). |
 | M-01, M-02, M-03, L-01, L-03, L-05, L-06 | Open | Each fix changes economic behaviour the spec defines (peg check in `sync`, reference to $1 in the mint band, time-weighted accrual, add gate, share-cap reference, queue keeper rules, swap price check). They wait for the owner's decision. |
 
 Every fixed finding has a regression test in `test/AuditRegressions.t.sol` that fails on the audited commit and passes after the fix. One side observation from the M-04 test: a 100k mint right after a 1k one leaves the body about $0.23 short of the credit-price measure with any fee; that is the L-01 effect (add at a price skewed within the band).
@@ -203,7 +203,7 @@ Effective fee: 14.3 bps instead of 50. If bob is excluded, it is 0.
 
 **Fix.** `src/NoUSDPositionManager.sol:178-183`: call `token.distribute(carry + fee)` before `token.mint(to, out)`, so that the new balance is checkpointed after the distribution. Alternatively send the mint fee to the treasury or to a vesting bucket.
 
-**Status:** Fixed in `b41e7eb`; regression test `test_M04_*` in `test/AuditRegressions.t.sol`.
+**Status:** Partially mitigated in `b41e7eb` (regression test `test_M04_*`): a single mint no longer recovers its fee, but splitting a mint into chunks in one transaction recovers 78-94 % of it ([re-audit N-01](2026-11-27-reaudit.md)). Full fix waits for the owner's decision.
 
 ---
 
@@ -311,7 +311,7 @@ In addition, once the trigger is reachable, anyone can execute the request and t
 
 **Fix.** In `src/NoUSDPositionManager.sol:504`, use the effective `readyAt = max(stored, requestedAt + current burnDelay)`. Give requests an expiry, or a cooldown on cancel (`src/lib/BurnQueue.sol:33-40`). Reject `requestBurn` when `burnDelay == 0` (`src/NoUSDPositionManager.sol:245`).
 
-**Status:** Fixed in `b0aceb5`; regression test `test_L04_*` in `test/AuditRegressions.t.sol`.
+**Status:** Partially mitigated in `b0aceb5` (test `test_L04_*`): requests are refused while `burnDelay == 0`, but a request made under any positive delay never expires once matured ([re-audit N-03](2026-11-27-reaudit.md)). Full fix waits for the owner's decision.
 
 ---
 

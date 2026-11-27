@@ -311,7 +311,7 @@ struct Obs { uint64 t; uint256 fg0; uint256 fg1; }   // feeGrowthGlobal points f
 mapping(PoolId => Obs[2]) public obs;                 // [older, newer], rotated by sync every selectionWindow
 
 Book book;  // idle[token] — held as the manager's ERC-6909 claims on the PoolManager —, scale, currencies
-uint256 public carry;                                // undistributed value (dust, mint fees)
+uint256 public carry;                                // undistributed value (rounding dust, fees booked by an add)
 
 struct BurnRequest { address owner; address to; uint128 amount; uint64 readyAt; uint128 minOut; bool done; }
 BurnRequest[] public burnQueue; uint256 public queueHead;
@@ -446,10 +446,14 @@ paused token blocks burn until it is unpaused; that is the token's property, not
    6-decimal token) and break `body ≥ liabilities`. Leftovers of the minter's tokens (in `t` or `u`) are refunded to
    `msg.sender`.
 7. `fee = added × mintFeeBps / 10 000`; `out = added − fee`.
-8. `require(out ≥ minOut)`; `require(totalSupply + out ≤ supplyCap)`; if `fee > 0`, distribute
-   `carry + fee` now (protocol cut, then `token.distribute`, remainder back to `carry`), **before**
-   `token.mint(to, out)`. Left in `carry` until the next sync, the fee was spread over a supply that
-   already held the minter's new balance, and a large minter got most of it back (audit 2026-11-26 M-04).
+8. `require(out ≥ minOut)`; `require(totalSupply + out ≤ supplyCap)`; if `carry + fee > 0`, distribute
+   it now (protocol cut, then `token.distribute`, remainder back to `carry`), **before**
+   `token.mint(to, out)`. Left in `carry` until the next sync, the fee (and the fees of the mint's own
+   swap, booked by the add) was spread over a supply that already held the minter's new balance, and a
+   large minter got most of it back (audit 2026-11-26 M-04). **Partial:** a minter who splits one mint
+   into several in a transaction still recovers most of the fee of the later chunks, because each chunk's
+   fee is spread over eligible supply holding the earlier ones (re-audit 2026-11-27 N-01). Closing that
+   needs the fee routed to the treasury or a streamed distribution (open, owner decision).
 
 Reverts if the swap or the add is impossible (out of range, breaker, share cap, supply cap, slippage).
 Pairing with idle costs the minter no swap fee and is value-neutral for holders at par.
@@ -479,7 +483,9 @@ ERC-20 transfer per token; revised on 2026-11-25 from 450k/500k after measuremen
 
 - `requestBurn(uint256 x, address to, uint256 minOut) returns (uint256 id)`: reverts `UseBurn` while
   `burnDelay == 0` (such a request would mature at once and stay an instant exit after the delay is
-  raised, audit 2026-11-26 L-04); otherwise moves `x` noUSD from the
+  raised, audit 2026-11-26 L-04). **Partial:** a request made under any `burnDelay > 0` still never
+  expires once matured, so a parked request remains an instant exit (re-audit 2026-11-27 N-03; an
+  execution window is open for the owner's decision). Otherwise it moves `x` noUSD from the
   holder to the manager with the manager-only `token.pullToManager` (no approval needed) (settles the holder; their accrued stays claimable with `claim`; the escrow is
   excluded and stops accruing); `escrowed += x`; pushes
   `{owner, to, x, readyAt = now + burnDelay, minOut}`.
